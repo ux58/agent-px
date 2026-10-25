@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Agent 学堂 — 系统化学习 AI Agent 开发：提示词、Agent 循环、Tool Use、MCP、Skill、多智能体、RAG、评测与安全" />
+    <title>Agent 学堂 · AI Agent 开发系统课</title>
+    <script>
+      /* 首帧前同步设定主题：亮色用户不再经历「暗色一闪 → 翻转为亮色」的 FOUC */
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("agentpx.theme") === "light" ? "light" : "dark";
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

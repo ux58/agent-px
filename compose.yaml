@@ -1,0 +1,19 @@
+services:
+  agent-school:
+    build: .
+    container_name: agent-school
+    ports:
+      - "8787:8787"
+    volumes:
+      - agent-school-data:/app/data
+    restart: unless-stopped
+    environment:
+      RUST_LOG: "agent_school_server=info,tower_http=warn"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  agent-school-data:

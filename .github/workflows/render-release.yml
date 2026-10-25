@@ -1,0 +1,64 @@
+# 发布 Render 部署包：GitHub Actions 里预编译 musl 静态二进制 + 前端产物，
+# 打包推送到独立的 render 分支；Render 免费实例（512MB）直接 COPY 二进制构建镜像，
+# 秒级完成、不占构建内存（在 Render 上现场 cargo build 会 OOM）。
+# 只需把仓库推到 GitHub（main 分支），本工作流自动产出 render 分支。
+name: render-release
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write # 推送 render 分支
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web (vite dist)
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build static server binary
+        working-directory: server
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Publish render branch (binary + dist + Dockerfile)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p pkg
+          cp server/target/x86_64-unknown-linux-musl/release/agent-school-server pkg/
+          cp -r web/dist pkg/dist
+          cp deploy/Dockerfile.render pkg/Dockerfile
+          cd pkg
+          git init -q
+          git checkout -q -b render
+          # 二进制不能被 git 做任何换行转换
+          git config core.autocrlf false
+          git config user.name "render-publisher"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "render package ${GITHUB_SHA::7}"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -q origin render --force
+          echo "render 分支已发布：二进制 + dist + Dockerfile，供 Render 拉取构建"

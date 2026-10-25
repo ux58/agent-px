@@ -1,0 +1,15 @@
+# Node
+node_modules/
+web/dist/
+
+# Rust
+server/target/
+
+# 进度数据（本地运行时生成）
+/data/
+server/data/
+
+# 环境与日志
+.env
+*.log
+.DS_Store
