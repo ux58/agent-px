@@ -12,5 +12,6 @@ RUN chmod +x /app/agent-school-server
 
 EXPOSE 8787
 
-# shell 形式以展开 Render 注入的 PORT 环境变量（默认 10000）；本地/其它平台回落 8787
-CMD agent-school-server --host 0.0.0.0 --port "${PORT:-8787}" --dist /app/web/dist --data-dir /app/data
+# exec 数组 + sh -c：绝对路径启动（PATH 不含工作目录，裸命令名会 127 not found），
+# sh -c 用于展开 Render 注入的 PORT 环境变量（默认 10000；本地/其它平台回落 8787）
+CMD ["/bin/sh", "-c", "/app/agent-school-server --host 0.0.0.0 --port \"${PORT:-8787}\" --dist /app/web/dist --data-dir /app/data"]
