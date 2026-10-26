@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tower_http::compression::{predicate::{NotForContentType, SizeAbove}, CompressionLayer};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 /// 学习进度记录。前端只有一个逻辑用户，profileId 预留多用户扩展。
@@ -250,6 +251,10 @@ async fn async_main() {
         }
     }
 
+    // 响应压缩：>1KB 且非图片才 gzip——前端 JS/CSS 传输体积约 -65%，加载显著提速
+    app = app.layer(
+        CompressionLayer::new().compress_when(SizeAbove::new(1024).and(NotForContentType::IMAGES)),
+    );
     app = app.layer(CorsLayer::permissive());
 
     let addr = format!("{}:{}", config.host, config.port);

@@ -1327,26 +1327,58 @@ body {
 /* ============ 动效优化层 v4：页面切换 / Tab / 选项卡 ============ */
 /* ============================================================ */
 
-/* 1) 主题切换：View Transitions 圆形扩散（截图合成，零逐元素重绘）。
-      圆心/半径由 JS 在创建 transition 前写入 --vt-*，动画随 transition 首帧即生效——
-      不要等 vt.ready 再挂类：那会让新快照先整页直切一帧再重放扩散，肉眼可见闪变。 */
+/* 1) View Transitions：主题 = 圆形扩散 + 旧主题微缩淡出（增加纵深）；
+      路由 = 整页交叉过渡（旧页快速淡出、新页上滑淡入，无白屏间隙）。
+      动画类由 JS 在创建 transition 前挂上（vt-active + vt-theme/vt-page），结束自动移除。 */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
 }
 ::view-transition-old(root) { z-index: 1; }
-::view-transition-new(root) {
-  z-index: 2;
-  animation: vt-circle 480ms var(--ease) both;
+::view-transition-new(root) { z-index: 2; }
+
+/* 主题切换：新主题从点击点圆形展开，旧主题轻微缩小压暗垫底——两层同动更有纵深感 */
+html.vt-theme::view-transition-new(root) {
+  animation: vt-circle 560ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+html.vt-theme::view-transition-old(root) {
+  animation: vt-dim 560ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
 }
 @keyframes vt-circle {
   from { clip-path: circle(0px at var(--vt-x, 96% 40px)); }
   to { clip-path: circle(var(--vt-r, 140vmax) at var(--vt-x, 96% 40px)); }
 }
+@keyframes vt-dim {
+  to { transform: scale(0.985); opacity: 0.72; }
+}
+
+/* 路由切换：旧页 240ms 淡出、新页 340ms 上滑淡入，全程无白帧 */
+html.vt-page::view-transition-old(root) {
+  animation: vt-page-out 240ms var(--ease) both;
+}
+html.vt-page::view-transition-new(root) {
+  animation: vt-page-in 340ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+@keyframes vt-page-out {
+  to { opacity: 0; }
+}
+@keyframes vt-page-in {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 不支持 VT 时的主题软着陆：新主题短促淡入，替代生硬硬切 */
+html.theme-fallback body { animation: theme-fallback-in 380ms var(--ease); }
+@keyframes theme-fallback-in {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
   ::view-transition-new(root) { animation: none; }
+  html.theme-fallback body { animation: none; }
 }
 
 /* 2) 顶栏激活态：滑块已由 .nav-pill 接管，去掉逐链接缩放 */

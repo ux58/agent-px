@@ -90,8 +90,113 @@ export function useProgress() {
   return { progress, mark, markEx, reset, serverSynced };
 }
 
-/** 主题：dark / light，持久化。切换用 View Transitions 圆形扩散（一次性截图合成，
-    避免逐元素颜色过渡造成的闪烁与全局重绘压力）；不支持的浏览器瞬时切换。
+/* ---------- View Transitions 公共层 ----------
+   个别 WebView/被遮挡环境下合成器不产帧，transition 会永久卡死（整页冻结在旧快照）。
+   启动后空闲时探测一次健康度：VT 不健康就用「瞬时切换 + CSS 软过渡」兜底，
+   健康才启用主题圆形扩散与路由整页交叉过渡。 */
+
+type VT = {
+  ready: Promise<void>;
+  finished: Promise<void>;
+  skipTransition: () => void;
+};
+
+let vtHealthy: boolean | null = null;
+
+/** 空闲时探测：无操作 transition 的 ready 在 350ms 内 resolve 视为健康 */
+export function probeViewTransitions() {
+  if (vtHealthy !== null) return;
+  const startVT = (document as Document & {
+    startViewTransition?: (cb: () => Promise<void> | void) => VT;
+  }).startViewTransition;
+  if (!startVT) {
+    vtHealthy = false;
+    return;
+  }
+  const t0 = performance.now();
+  let settled = false;
+  const fail = () => {
+    if (!settled) {
+      settled = true;
+      vtHealthy = false;
+    }
+  };
+  try {
+    const vt = startVT(() => {});
+    const timer = setTimeout(fail, 350);
+    vt.ready.then(
+      () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          vtHealthy = performance.now() - t0 < 350;
+        }
+      },
+      fail,
+    );
+    vt.finished.catch(() => {}).finally(() => {
+      clearTimeout(timer);
+      fail();
+    });
+  } catch {
+    vtHealthy = false;
+  }
+}
+
+/** 统一 VT 包装：挂 kind 类供 CSS 区分动画（vt-theme / vt-page），
+    卡死 450ms 兜底 skip + 补执行，结束清理类。返回 false = 未走 VT（调用方自行瞬时 apply）。 */
+function runViewTransition(
+  kind: "theme" | "page",
+  update: () => Promise<void> | void,
+  forceApply: () => void,
+): boolean {
+  const startVT = (document as Document & {
+    startViewTransition?: (cb: () => Promise<void> | void) => VT;
+  }).startViewTransition;
+  const root = document.documentElement;
+  if (
+    !startVT ||
+    vtHealthy === false ||
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    return false;
+  }
+  // 已有过渡在跑（连点主题 / 快速翻页）：直接瞬时更新，避免嵌套 startViewTransition 抛错
+  if (root.classList.contains("vt-active")) {
+    return false;
+  }
+  root.classList.add("vt-active", `vt-${kind}`);
+  let vt: VT;
+  try {
+    vt = startVT(update);
+  } catch {
+    root.classList.remove("vt-active", `vt-${kind}`);
+    return false;
+  }
+  const cleanup = () => root.classList.remove("vt-active", `vt-${kind}`);
+  const guard = setTimeout(() => {
+    try {
+      vt.skipTransition();
+    } catch {
+      /* 已结束的 transition 跳过会抛错，忽略 */
+    }
+    forceApply();
+    cleanup();
+  }, 450);
+  const settle = () => {
+    clearTimeout(guard);
+    cleanup();
+  };
+  vt.ready.then(
+    () => clearTimeout(guard),
+    () => clearTimeout(guard),
+  );
+  vt.finished.catch(() => {}).finally(settle);
+  return true;
+}
+
+/** 主题：dark / light，持久化。健康浏览器用 View Transitions 圆形扩散（从点击位置
+    展开 + 旧主题微缩淡出）；不健康/不支持的浏览器瞬时切换 + 短促 CSS 淡入软着陆。
     首帧主题由 index.html 内联脚本预设，这里初始化时直接读 DOM，避免二次翻转。 */
 export function useTheme() {
   const [theme, setTheme] = useState<"dark" | "light">(
@@ -108,32 +213,19 @@ export function useTheme() {
   }, [theme]);
 
   const toggle = useCallback((origin?: { x: number; y: number }) => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const startVT = (document as Document & {
-      startViewTransition?: (cb: () => Promise<void> | void) => {
-        ready: Promise<void>;
-        finished: Promise<void>;
-        skipTransition: () => void;
-      };
-    }).startViewTransition;
     const apply = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
-
-    if (!startVT || reduce) {
-      apply();
-      return;
-    }
+    const root = document.documentElement;
     // 圆心/半径必须在创建 transition 之前写入：伪元素动画随 transition 首帧即生效。
-    // （若等 vt.ready 再挂动画类，new 快照会先整页直切一帧再重放圆形扩散，形成闪变。）
+    // 键盘触发（Enter/Space）时 clientX/Y 为 0：回退到按钮中心而非屏幕左上角。
     const btn = document.querySelector(".theme-switch")?.getBoundingClientRect();
-    // 键盘触发（Enter/Space）时 clientX/Y 为 0：回退到按钮中心而非屏幕左上角
     const hasPoint = !!origin && (origin.x > 0 || origin.y > 0);
     const x = hasPoint ? origin!.x : btn ? btn.left + btn.width / 2 : window.innerWidth - 48;
     const y = hasPoint ? origin!.y : btn ? btn.top + btn.height / 2 : 40;
     const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
-    const root = document.documentElement;
     root.style.setProperty("--vt-x", `${x}px`);
     root.style.setProperty("--vt-y", `${y}px`);
     root.style.setProperty("--vt-r", `${radius}px`);
+
     const domCommitted = new Promise<void>((resolve) => {
       commitRef.current = resolve;
     });
@@ -144,51 +236,62 @@ export function useTheme() {
       applied = true;
       apply();
     };
-    let vt: ReturnType<NonNullable<typeof startVT>> | null = null;
-    try {
-      vt = startVT(() => {
+
+    const usedVt = runViewTransition(
+      "theme",
+      () => {
         applyOnce();
         return domCommitted;
-      });
-    } catch {
-      // 个别 WebView 在存在未完成过渡时会同步抛错：异常一旦冒泡，
-      // 后面的兜底定时器就永远不会被调度，主题将永久卡死——这里直接瞬时切换保功能
-      applyOnce();
-      return;
-    }
-    // 卡死兜底：后台标签页 / 面板被遮挡时合成器不产帧，transition 会停在截图阶段，
-    // ready 永不触发且整页冻在旧快照上（表现为「点了没反应」）。超时则跳过过渡直接切换。
-    const guard = setTimeout(() => {
-      try {
-        vt!.skipTransition();
-      } catch {
-        /* 已结束的 transition 跳过会抛错，忽略 */
-      }
-      applyOnce();
-    }, 500);
-    // ready 被拒（过渡被跳过）时回调可能未执行：清掉 guard 并补切，幂等安全
-    vt.ready.then(
-      () => clearTimeout(guard),
-      () => {
-        clearTimeout(guard);
-        applyOnce();
       },
+      applyOnce,
     );
-    vt.finished.catch(() => {}).finally(() => clearTimeout(guard));
+    if (!usedVt) {
+      commitRef.current = null;
+      applyOnce();
+      // 无过渡能力时的软着陆：新主题短暂淡入，替代生硬的硬切
+      root.classList.add("theme-fallback");
+      setTimeout(() => root.classList.remove("theme-fallback"), 420);
+    }
   }, []);
 
   return { theme, toggle };
 }
 
-/** hash 路由：#/、#/course/<key>、#/sandbox、#/glossary、#/lab */
+/** 最近一次路由切换是否由 VT 接管：App 据此决定是否还叠加 CSS 入场动画（防双重动画） */
+export const navState = { usedVt: false };
+
+/** hash 路由：#/、#/course/<key>、#/sandbox、#/glossary、#/lab。
+    VT 健康时切换用整页交叉过渡（旧页淡出、新页上滑淡入，无白屏间隙）；
+    回调要等 React 渲染出新页面才 resolve，VT 才能截到最终画面。 */
 export function useHashRoute() {
   const [hash, setHash] = useState(() => window.location.hash || "#/");
+  const commitRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    commitRef.current?.();
+    commitRef.current = null;
+  }, [hash]);
+
   useEffect(() => {
     const onChange = () => {
-      setHash(window.location.hash || "#/");
-      // 切页即时回顶：CSS 的 scroll-behavior:smooth 会让这次滚动变成动画，
-      // 页面看起来「空转半天才回到内容」，这里显式用 instant。
-      window.scrollTo({ top: 0, behavior: "instant" });
+      const target = window.location.hash || "#/";
+      const apply = () => {
+        setHash(target);
+        // 切页即时回顶：CSS 的 scroll-behavior:smooth 会把这次滚动变成动画，显式 instant
+        window.scrollTo({ top: 0, behavior: "instant" });
+      };
+      const commit = new Promise<void>((resolve) => {
+        commitRef.current = resolve;
+      });
+      const usedVt = runViewTransition("page", () => {
+        apply();
+        return commit;
+      }, apply);
+      navState.usedVt = usedVt;
+      if (!usedVt) {
+        commitRef.current = null;
+        apply();
+      }
     };
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);

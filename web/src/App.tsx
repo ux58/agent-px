@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { RefObject } from "react";
 import { Moon, Sun } from "lucide-react";
-import { useHashRoute, useProgress, useTheme } from "./hooks";
+import { useHashRoute, useProgress, useTheme, navState, probeViewTransitions } from "./hooks";
 import { ALL_LESSONS, STAGES_DATA, TOTAL_LESSONS, findLesson, lessonNeighbors } from "./types";
 import { GLOSSARY } from "./data";
 import { useActiveBox } from "./components/Slider";
@@ -129,6 +129,12 @@ export default function App() {
     prefetchHeavyChunks();
   }, []);
 
+  // 空闲时探测 View Transitions 健康度：决定主题/路由过渡走 VT 还是 CSS 兜底
+  useEffect(() => {
+    const t = setTimeout(probeViewTransitions, 1200);
+    return () => clearTimeout(t);
+  }, []);
+
   const nav = (
     <nav className="topnav">
       <a className="brand" href="#/">
@@ -208,7 +214,8 @@ export default function App() {
   return (
     <div className="app">
       {nav}
-      <main className="main page-fade" key={route.page + (route.key ?? "")}>{body}</main>
+      {/* 本次导航由 VT 整页交叉过渡接管时不再叠加 CSS 入场动画（防双重动画） */}
+      <main className={navState.usedVt ? "main" : "main page-fade"} key={route.page + (route.key ?? "")}>{body}</main>
       <BackToTop />
       <SiteFooter />
     </div>
