@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { ProgressMap } from "./types";
 
 const KEY = "agentpx.progress.v1";
@@ -90,208 +91,91 @@ export function useProgress() {
   return { progress, mark, markEx, reset, serverSynced };
 }
 
-/* ---------- View Transitions 公共层 ----------
-   个别 WebView/被遮挡环境下合成器不产帧，transition 会永久卡死（整页冻结在旧快照）。
-   启动后空闲时探测一次健康度：VT 不健康就用「瞬时切换 + CSS 软过渡」兜底，
-   健康才启用主题圆形扩散与路由整页交叉过渡。 */
-
-type VT = {
-  ready: Promise<void>;
-  finished: Promise<void>;
-  skipTransition: () => void;
-};
-
-let vtHealthy: boolean | null = null;
-
-/** 空闲时探测：无操作 transition 的 ready 在 350ms 内 resolve 视为健康 */
-export function probeViewTransitions() {
-  if (vtHealthy !== null) return;
-  const startVT = (document as Document & {
-    startViewTransition?: (cb: () => Promise<void> | void) => VT;
-  }).startViewTransition;
-  if (!startVT) {
-    vtHealthy = false;
-    return;
-  }
-  const t0 = performance.now();
-  let settled = false;
-  const fail = () => {
-    if (!settled) {
-      settled = true;
-      vtHealthy = false;
-    }
-  };
-  try {
-    const vt = startVT(() => {});
-    const timer = setTimeout(fail, 350);
-    vt.ready.then(
-      () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          vtHealthy = performance.now() - t0 < 350;
-        }
-      },
-      fail,
-    );
-    vt.finished.catch(() => {}).finally(() => {
-      clearTimeout(timer);
-      fail();
-    });
-  } catch {
-    vtHealthy = false;
-  }
-}
-
-/** 统一 VT 包装：挂 kind 类供 CSS 区分动画（vt-theme / vt-page），
-    卡死 450ms 兜底 skip + 补执行，结束清理类。返回 false = 未走 VT（调用方自行瞬时 apply）。 */
-function runViewTransition(
-  kind: "theme" | "page",
-  update: () => Promise<void> | void,
-  forceApply: () => void,
-): boolean {
-  const startVT = (document as Document & {
-    startViewTransition?: (cb: () => Promise<void> | void) => VT;
-  }).startViewTransition;
-  const root = document.documentElement;
-  if (
-    !startVT ||
-    vtHealthy === false ||
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
-    return false;
-  }
-  // 已有过渡在跑（连点主题 / 快速翻页）：直接瞬时更新，避免嵌套 startViewTransition 抛错
-  if (root.classList.contains("vt-active")) {
-    return false;
-  }
-  root.classList.add("vt-active", `vt-${kind}`);
-  let vt: VT;
-  try {
-    vt = startVT(update);
-  } catch {
-    root.classList.remove("vt-active", `vt-${kind}`);
-    return false;
-  }
-  const cleanup = () => root.classList.remove("vt-active", `vt-${kind}`);
-  const guard = setTimeout(() => {
-    try {
-      vt.skipTransition();
-    } catch {
-      /* 已结束的 transition 跳过会抛错，忽略 */
-    }
-    forceApply();
-    cleanup();
-  }, 450);
-  const settle = () => {
-    clearTimeout(guard);
-    cleanup();
-  };
-  vt.ready.then(
-    () => clearTimeout(guard),
-    () => clearTimeout(guard),
-  );
-  vt.finished.catch(() => {}).finally(settle);
-  return true;
-}
-
-/** 主题：dark / light，持久化。健康浏览器用 View Transitions 圆形扩散（从点击位置
-    展开 + 旧主题微缩淡出）；不健康/不支持的浏览器瞬时切换 + 短促 CSS 淡入软着陆。
-    首帧主题由 index.html 内联脚本预设，这里初始化时直接读 DOM，避免二次翻转。 */
+/** 主题：dark / light，持久化。切换即时生效；圆环收缩动画为纯装饰（WAAPI 遮罩层），
+    不承担任何状态职责 —— 状态同步落在点击事件任务内（输入分发永不被节流），
+    在渲染管线被遮挡冻结的环境（如内嵌 webview）下依然点击即生效。 */
 export function useTheme() {
-  const [theme, setTheme] = useState<"dark" | "light">(
-    () => (document.documentElement.dataset.theme === "light" ? "light" : "dark"),
-  );
-  // startViewTransition 的回调必须等 React 把 dataset.theme 提交到 DOM 后再 resolve
-  const commitRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const saved = localStorage.getItem("agentpx.theme");
+    return saved === "light" ? "light" : "dark";
+  });
+  // themeRef：已提交到 DOM 的主题；intentRef：意图主题（点击即翻转）。
+  // 两者由 apply() 收敛，幂等单调 —— 任何乱序/丢失/迟到都收敛到最新意图，不会翻两次。
+  const themeRef = useRef(theme);
+  const intentRef = useRef(theme);
+  useLayoutEffect(() => {
+    themeRef.current = theme;
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("agentpx.theme", theme);
-    commitRef.current?.();
-    commitRef.current = null;
   }, [theme]);
 
-  const toggle = useCallback((origin?: { x: number; y: number }) => {
-    const apply = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
-    const root = document.documentElement;
-    // 圆心/半径必须在创建 transition 之前写入：伪元素动画随 transition 首帧即生效。
-    // 键盘触发（Enter/Space）时 clientX/Y 为 0：回退到按钮中心而非屏幕左上角。
-    const btn = document.querySelector(".theme-switch")?.getBoundingClientRect();
-    const hasPoint = !!origin && (origin.x > 0 || origin.y > 0);
-    const x = hasPoint ? origin!.x : btn ? btn.left + btn.width / 2 : window.innerWidth - 48;
-    const y = hasPoint ? origin!.y : btn ? btn.top + btn.height / 2 : 40;
-    const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
-    root.style.setProperty("--vt-x", `${x}px`);
-    root.style.setProperty("--vt-y", `${y}px`);
-    root.style.setProperty("--vt-r", `${radius}px`);
-
-    const domCommitted = new Promise<void>((resolve) => {
-      commitRef.current = resolve;
-    });
-    // 回调只允许执行一次：异常/超时兜底路径下回调可能被跳过，需手动补切
-    let applied = false;
-    const applyOnce = () => {
-      if (applied) return;
-      applied = true;
-      apply();
-    };
-
-    const usedVt = runViewTransition(
-      "theme",
-      () => {
-        applyOnce();
-        return domCommitted;
-      },
-      applyOnce,
-    );
-    if (!usedVt) {
-      commitRef.current = null;
-      applyOnce();
-      // 无过渡能力时的软着陆：新主题短暂淡入，替代生硬的硬切
-      root.classList.add("theme-fallback");
-      setTimeout(() => root.classList.remove("theme-fallback"), 420);
-    }
+  const apply = useCallback(() => {
+    if (themeRef.current === intentRef.current) return;
+    themeRef.current = intentRef.current;
+    flushSync(() => setTheme(intentRef.current));
   }, []);
+
+  const toggle = useCallback(() => {
+    // 自愈对齐：若上一次意图因故未落 DOM，以屏幕可见状态为基准，
+    // 保证每次点击翻转的都是用户眼前看到的那一档，永不出现"两次点击互相抵消"
+    if (intentRef.current !== themeRef.current) intentRef.current = themeRef.current;
+    const from = intentRef.current;
+    intentRef.current = from === "dark" ? "light" : "dark";
+
+    const btn = document.querySelector(".theme-switch");
+    const r = btn?.getBoundingClientRect();
+    const x = r ? r.left + r.width / 2 : window.innerWidth - 48;
+    const y = r ? r.top + r.height / 2 : 40;
+    const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+
+    apply(); // 同步落盘：本 tick 内状态与 DOM 一致，点击即生效
+
+    // 纯装饰动画：旧主题底色遮罩从全屏圆环收缩回按钮位置（方向：旧貌收进按钮）。
+    // 不依赖渲染机会 —— 管线冻结时动画不播，状态也绝不出错；遮罩由 finished/超时双保险移除。
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const oldBg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    if (!oldBg) return;
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `position:fixed;inset:0;z-index:2147483646;pointer-events:none;background:${oldBg};`;
+    document.body.appendChild(overlay);
+    const remove = () => overlay.remove();
+    const anim = overlay.animate(
+      [
+        { clipPath: `circle(${radius}px at ${x}px ${y}px)`, opacity: 1 },
+        { clipPath: `circle(0px at ${x}px ${y}px)`, opacity: 0.6 },
+      ],
+      { duration: 420, easing: "cubic-bezier(0.25, 0.8, 0.3, 1)" },
+    );
+    anim.finished.then(remove, remove);
+    setTimeout(remove, 700);
+  }, [apply]);
+
+  // 原生兜底：开发模式下偶发"点击到达按钮、React 处理器却没执行"（HMR / 长闲置后首点）。
+  // 点击后 250ms 意图仍未翻转 → 判定该次事件在 React 层丢失，原生补一次 toggle。
+  useEffect(() => {
+    const btn = document.querySelector(".theme-switch");
+    if (!btn) return;
+    let intentAtClick = intentRef.current;
+    const onNativeClick = () => {
+      intentAtClick = intentRef.current;
+      window.setTimeout(() => {
+        if (intentRef.current === intentAtClick) toggle();
+      }, 250);
+    };
+    btn.addEventListener("click", onNativeClick);
+    return () => btn.removeEventListener("click", onNativeClick);
+  }, [toggle]);
 
   return { theme, toggle };
 }
 
-/** 最近一次路由切换是否由 VT 接管：App 据此决定是否还叠加 CSS 入场动画（防双重动画） */
-export const navState = { usedVt: false };
-
-/** hash 路由：#/、#/course/<key>、#/sandbox、#/glossary、#/lab。
-    VT 健康时切换用整页交叉过渡（旧页淡出、新页上滑淡入，无白屏间隙）；
-    回调要等 React 渲染出新页面才 resolve，VT 才能截到最终画面。 */
+/** hash 路由：#/、#/course/<key>、#/sandbox、#/glossary、#/lab */
 export function useHashRoute() {
   const [hash, setHash] = useState(() => window.location.hash || "#/");
-  const commitRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    commitRef.current?.();
-    commitRef.current = null;
-  }, [hash]);
-
   useEffect(() => {
     const onChange = () => {
-      const target = window.location.hash || "#/";
-      const apply = () => {
-        setHash(target);
-        // 切页即时回顶：CSS 的 scroll-behavior:smooth 会把这次滚动变成动画，显式 instant
-        window.scrollTo({ top: 0, behavior: "instant" });
-      };
-      const commit = new Promise<void>((resolve) => {
-        commitRef.current = resolve;
-      });
-      const usedVt = runViewTransition("page", () => {
-        apply();
-        return commit;
-      }, apply);
-      navState.usedVt = usedVt;
-      if (!usedVt) {
-        commitRef.current = null;
-        apply();
-      }
+      setHash(window.location.hash || "#/");
+      window.scrollTo({ top: 0 });
     };
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Factory,
@@ -13,8 +13,7 @@ import type { ProgressMap, Stage } from "../types";
 import { GLOSSARY } from "../data";
 import { STAGE_META, LessonCard } from "./LessonCard";
 import { StageCarousel } from "./StageCarousel";
-import { useActiveBox } from "./Slider";
-import type { CSSProperties, RefObject } from "react";
+import type { CSSProperties } from "react";
 
 const TOPICS: { icon: string; name: string; keys: string[] }[] = [
   { icon: "🔁", name: "Agent 循环", keys: ["agent-loop", "first-agent", "planning"] },
@@ -23,8 +22,6 @@ const TOPICS: { icon: string; name: string; keys: string[] }[] = [
   { icon: "🔌", name: "MCP 协议", keys: ["mcp", "prod-architecture"] },
   { icon: "🎒", name: "Skill 开发", keys: ["skills", "memory"] },
   { icon: "🕸", name: "多智能体", keys: ["multi-agent", "protocol-ecosystem"] },
-  { icon: "⌨️", name: "编程智能体", keys: ["coding-agents", "skills"] },
-  { icon: "🖥", name: "Computer Use", keys: ["computer-use", "agent-loop"] },
   { icon: "📚", name: "RAG 检索", keys: ["rag", "memory"] },
   { icon: "📊", name: "评测驱动", keys: ["evals", "case-study", "capstone"] },
   { icon: "🛡", name: "安全护栏", keys: ["safety", "prod-architecture"] },
@@ -81,16 +78,30 @@ type Hit =
   | { kind: "术语"; title: string; sub: string; href: string }
   | { kind: "模拟器"; title: string; sub: string; href: string };
 
-/* Tab 栏胶囊滑块：测量激活 tab 的位置，translate + 宽高滑动跟随（与顶栏胶囊同语言） */
-function TabSlider({ tab, barRef }: { tab: TabId; barRef: RefObject<HTMLDivElement | null> }) {
-  const { box, ready } = useActiveBox(barRef, `[data-tab="${tab}"]`, tab);
+/* Tab 栏滑动指示条：测量激活 tab 的位置，transform 滑动跟随 */
+function TabSlider({ tab }: { tab: TabId }) {
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const [style, setStyle] = useState<{ x: number; w: number } | null>(null);
+
+  useEffect(() => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    // tab 按钮是滑块的兄弟节点，从父容器（.tabs）里测量
+    const bar = slider.parentElement;
+    if (!bar) return;
+    const measure = () => {
+      const el = bar.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`);
+      if (!el) return;
+      setStyle({ x: el.offsetLeft, w: el.offsetWidth });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [tab]);
+
   return (
-    <div
-      className="tabs-slider"
-      data-ready={ready ? "1" : "0"}
-      style={box ? { transform: `translate(${box.x}px, ${box.y}px)`, width: box.w, height: box.h } : undefined}
-      aria-hidden="true"
-    />
+    <div ref={sliderRef} className="tabs-slider" style={style ? { transform: `translateX(${style.x}px)`, width: style.w } : undefined} aria-hidden="true" />
   );
 }
 
@@ -185,7 +196,6 @@ function StageGroupHead({ stage, progress }: { stage: Stage; progress: ProgressM
 
 export function Home({ progress }: { progress: ProgressMap }) {
   const [tab, setTab] = useState<TabId>("all");
-  const tabsRef = useRef<HTMLDivElement>(null);
   const total = ALL_LESSONS.length;
   const doneCount = ALL_LESSONS.filter((x) => lessonTouched(progress[x.lesson.key])).length;
   const next = ALL_LESSONS.find((x) => !lessonTouched(progress[x.lesson.key]));
@@ -255,8 +265,8 @@ export function Home({ progress }: { progress: ProgressMap }) {
           <div className="stat"><b>{GLOSSARY.length}</b><span>术语词条</span></div>
         </div>
 
-        <div className="tabs" role="tablist" ref={tabsRef}>
-          <TabSlider tab={tab} barRef={tabsRef} />
+        <div className="tabs" role="tablist">
+          <TabSlider tab={tab} />
           {TABS.map((t) => (
             <button
               key={t.id}

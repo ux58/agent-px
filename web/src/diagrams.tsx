@@ -156,8 +156,8 @@ function Mcp() {
       <rect x="225" y="105" width="110" height="140" rx="10" style={{ fill: "var(--warn-soft)" }} />
       <text x="280" y="130" textAnchor="middle" style={S.text} className="svg-t2">权限控制</text>
       <text x="280" y="155" textAnchor="middle" style={S.dim} className="svg-t2">用户确认</text>
-      <text x="280" y="175" textAnchor="middle" style={S.dim} className="svg-t2">能力协商</text>
-      <text x="280" y="195" textAnchor="middle" style={S.dim} className="svg-t2">采样沙箱</text>
+      <text x="280" y="175" textAnchor="middle" style={S.dim} className="svg-t2">高危工具审批</text>
+      <text x="280" y="195" textAnchor="middle" style={S.dim} className="svg-t2">采样转发沙箱</text>
 
       <rect x="440" y="80" width="160" height="60" rx="10" style={S.box} />
       <text x="520" y="105" textAnchor="middle" style={S.text} className="svg-t1">Server：GitHub</text>
@@ -198,7 +198,7 @@ function Skill() {
       <path d="M395,122 H450" style={line} markerEnd={`url(#${id})`} />
 
       <rect x="120" y="185" width="400" height="50" rx="10" style={{ fill: "var(--box)" }} />
-      <text x="320" y="212" textAnchor="middle" style={S.dim} className="svg-t2">对比 MCP：工具全量常驻上下文；Skill 只在用到时展开 → 省上下文、可版本管理</text>
+      <text x="320" y="212" textAnchor="middle" style={S.dim} className="svg-t2">对比 MCP 经典形态：工具全量常驻（新版已支持按需检索）；Skill 用到才展开</text>
     </svg>
   );
 }
@@ -498,7 +498,7 @@ function CostLayers() {
       <text x="320" y="26" textAnchor="middle" style={S.text} className="svg-title">成本四层漏斗：请求自上而下逐层过滤</text>
 
       <rect x="80" y="50" width="480" height="42" rx="10" style={S.acc} />
-      <text x="320" y="76" textAnchor="middle" style={S.text} className="svg-t1">L1 提示缓存：系统提示+工具定义命中 ≈ 1 折计价</text>
+      <text x="320" y="76" textAnchor="middle" style={S.text} className="svg-t1">L1 提示缓存：系统提示+工具定义命中 ≈ 1 折（2026 主流通行价）</text>
       <rect x="80" y="102" width="480" height="42" rx="10" style={S.box} />
       <text x="320" y="128" textAnchor="middle" style={S.text} className="svg-t1">L2 语义缓存：相似问句直接返回（命中率 30~50%）</text>
       <rect x="80" y="154" width="480" height="42" rx="10" style={S.box} />

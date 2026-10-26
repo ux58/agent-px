@@ -38,7 +38,7 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: pnpm eval --suite smoke --report out.json
       - run: pnpm eval-gate --baseline baselines/main.json \\
           --min-pass 0.92 --max-regression 0.01 \\
@@ -56,15 +56,6 @@ jobs:
           ["人工一致率", "裁判与人工抽检的吻合度", "≥ 85%（裁判可信度前提）"],
         ] },
         { type: "quote", text: "没有评测的提示词优化是玄学：你改的那行可能提升了眼前的例子，同时悄悄弄坏了三个没看见的。评测集就是 Agent 团队的单元测试——先有它，再谈迭代速度。" },
-        { type: "work", title: "真实标杆：业界评测实践的三个共识（截至本课更新）", text: "从模型厂商的公开方法到社区流行的方法论，评测实践在 2025-2026 已收敛出三个共识，与本课框架完全一致：", list: [
-          "错误分析驱动，而不是分数驱动：独立顾问 Hamel Husain 的评测课程影响了大量团队，核心主张是「先人工读 50 条失败样本再谈优化」——分类失败模式（检索没找到/找到了没用上/格式坏了/知识错了），每种模式对症下药，分数只是副产品",
-          "评测集来自真实流量，而不是拍脑袋：厂商与框架（OpenAI Evals、LangSmith、Langfuse 等）都把「生产 trace 回流建集」作为一等公民——本课「线上回流最重要」的同款结论",
-          "人工抽检是裁判的地基：LLM-as-Judge 已是标准配置，但所有成熟实践都要求定期人工复判校准（本课的 85% 一致率门槛）——无人校准的裁判分数会静悄悄地漂移",
-        ], code: `# 一个务实的评测起步路径（业界共识版）
-1. 导出最近 50 条真实失败案例（差评/转人工）
-2. 人工逐条标注失败模式，归类统计 —— 这一步比任何工具都值钱
-3. 按 Top3 失败模式建断言与 rubric，进 CI 当门禁
-4. 每周回流新失败样本，重复 1-3`, lang: "text" },
         { type: "exercise", ex: {
           kind: "quiz",
           q: "LLM 裁判的判分突然集体偏高，最可能的原因和正确动作是？",
@@ -87,18 +78,6 @@ jobs:
             "改动提示词/工具后重跑，对比分数 diff",
             "针对新增失败用例迭代，直到门禁通过才合并",
           ],
-        } },
-        { type: "exercise", ex: {
-          kind: "quiz",
-          q: "按业界共识（错误分析驱动），接手一个不达标的 Agent 系统，第一周最该做的事是？",
-          options: [
-            "换最新的旗舰模型重跑一遍",
-            "导出 50 条真实失败案例，人工逐条标注失败模式并归类——先知道「输在哪」再动手",
-            "把所有提示词重写一遍",
-            "加大投放让更多用户用",
-          ],
-          answer: 1,
-          explain: "错误分析是性价比最高的第一步：失败模式分布直接告诉你该修检索、修提示还是修工具。换模型/重写提示是「不知道病在哪就开药」。",
         } },
       ],
     },
@@ -176,16 +155,6 @@ async function dangerousCall(call: ToolCall, ctx: Ctx) {
           q: "把恶意指令藏进模型会读的内容（网页、PDF、邮件）里的攻击方式，叫提示_____（中文两字 / 英文两词）。",
           answers: ["注入", "injection", "prompt injection", "提示注入"],
         } },
-        { type: "exercise", ex: {
-          kind: "match",
-          q: "把安全防线和它防住的威胁连起来：",
-          pairs: [
-            { left: "数据块隔离标记", right: "直接提示注入（缓解层）" },
-            { left: "外发地址白名单", right: "注入成功后的数据外泄（兜底层）" },
-            { left: "HITL 审批 + 超时默认拒绝", right: "不可逆的高危操作" },
-            { left: "无进展检测熔断", right: "失控循环空转烧钱" },
-          ],
-        } },
       ],
     },
     {
@@ -200,12 +169,12 @@ async function dangerousCall(call: ToolCall, ctx: Ctx) {
           ["Log 日志", "结构化事件", "提示词版本、工具入参出参摘要、token 用量——都进日志"],
           ["Metric 指标", "QPS / 延迟", "新增：步数分布、工具失败率、缓存命中率、每任务成本"],
         ] },
-        { type: "p", text: "核心实践：trace_id 从网关生成，一路透传到工具调用与审批系统。一次任务展开成一棵 span 树，树上每个节点带统一属性（step、model、tokens、cost）——用 OpenTelemetry 语义约定的话，还能跨团队聚合。" },
+        { type: "p", text: "核心实践：trace_id 从网关生成，一路透传到工具调用与审批系统。一次任务展开成一棵 span 树，树上每个节点带统一属性（step、model、tokens、cost）——用 OpenTelemetry 的 GenAI 语义约定（仍在快速演进，记得 pin 住约定版本）的话，还能跨团队聚合。" },
         { type: "code", lang: "typescript", code: `// 每步循环的 span 结构（OTel 风格）
 span = tracer.startSpan(\`step.\${n}\`, {
   attributes: {
     "agent.step": n,
-    "gen_ai.request.model": "claude-sonnet-4-5",
+    "gen_ai.request.model": "claude-sonnet-5-5",
     "gen_ai.usage.input_tokens": usage.input,
     "gen_ai.usage.output_tokens": usage.output,
     "tool.name": block.name,          // 该步执行的工具
@@ -249,18 +218,6 @@ span = tracer.startSpan(\`step.\${n}\`, {
             "打三个补丁：评测集补样本、护栏补规则、监控补指标",
             "复盘归档，验证补丁后恢复流量",
           ],
-        } },
-        { type: "exercise", ex: {
-          kind: "quiz",
-          q: "「每条告警自动附 3 个最近失败 trace 的链接」这个设计的直接价值是？",
-          options: [
-            "让告警邮件更好看",
-            "把「告警→定位」的时间从半小时降到几分钟：点开即见完整 span 树，直接看到第一个出错的 step",
-            "减少告警数量",
-            "降低 token 成本",
-          ],
-          answer: 1,
-          explain: "可观测性的验收标准就是「10 分钟内定位到 step」。告警带 trace 样例是这个标准最便宜的实现——省掉人工查日志、对时间窗、拼链路的全过程。",
         } },
       ],
     },
@@ -327,11 +284,6 @@ span = tracer.startSpan(\`step.\${n}\`, {
           ],
           answer: 1,
           explain: "知识助手免 HITL 的前提是「只有读权限」；越权用例零通过证明权限过滤真正落在检索层，而不是靠提示词自觉。",
-        } },
-        { type: "exercise", ex: {
-          kind: "blank",
-          q: "毕业项目第 2 周结束时，课程判断「这一周解决 80% 质量问题」的依据是：质量问题的绝大多数出在检索端——对应第 4 阶段结论「RAG 失败八成不在_____在检索」（填一个字）。",
-          answers: ["模型"],
         } },
       ],
     },

@@ -1,18 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { GLOSSARY } from "../data";
-import { useActiveBox } from "./Slider";
 
 export function Glossary() {
   const [q, setQ] = useState("");
   const [letter, setLetter] = useState<string | null>(null);
-  const chipsRef = useRef<HTMLDivElement>(null);
-  // 字母筛选滑块：随激活字母滑动（chips 可换行，量 offsetTop 一起跟）
-  const { box: chipBox, ready: chipReady } = useActiveBox(
-    chipsRef,
-    "[data-chip].active",
-    letter ?? "all",
-  );
 
   const letters = useMemo(() => {
     const s = new Set<string>();
@@ -54,21 +46,15 @@ export function Glossary() {
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
-        <div className="letter-chips" ref={chipsRef}>
-          <span
-            className="chip-slider"
-            data-ready={chipReady ? "1" : "0"}
-            style={chipBox ? { transform: `translate(${chipBox.x}px, ${chipBox.y}px)`, width: chipBox.w, height: chipBox.h } : undefined}
-            aria-hidden="true"
-          />
-          <button data-chip="all" className={!letter ? "active" : ""} onClick={() => setLetter(null)}>全部</button>
+        <div className="letter-chips">
+          <button className={!letter ? "active" : ""} onClick={() => setLetter(null)}>全部</button>
           {letters.map((L) => (
-            <button key={L} data-chip={L} className={letter === L ? "active" : ""} onClick={() => setLetter(L)}>{L}</button>
+            <button key={L} className={letter === L ? "active" : ""} onClick={() => setLetter(L)}>{L}</button>
           ))}
         </div>
       </div>
 
-      <div className="glossary-grid" key={letter ?? "all"}>
+      <div className="glossary-grid">
         {list.map((t, i) => (
           <div className="glossary-item" key={t.en + t.term}>
             <span

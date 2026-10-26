@@ -61,38 +61,35 @@ export function StageCarousel({ progress }: { progress: ProgressMap }) {
     const p = Math.min(posRef.current, positions.length - 1);
     posRef.current = p;
     setPos(p);
-    // 缩放窗口时轨道可能正在动画中途，先杀掉再落位，避免在途 tween 把旧位置写回
-    gsap.killTweensOf(track);
-    gsap.set(track, { x: -positions[p], scale: 1 });
+    gsap.set(track, { x: -positions[p] });
   }, []);
 
   const go = useCallback((target: number) => {
     const positions = positionsRef.current;
     const track = trackRef.current;
-    if (!track || positions.length === 0) return;
+    if (!track) return;
     const p = Math.max(0, Math.min(target, positions.length - 1));
     posRef.current = p;
     setPos(p);
     const x = -positions[p];
-    // 杀掉所有在途 tween（含上一轮切换遗留的回弹）：被杀 tween 的 onComplete 不再触发，
-    // 否则上一轮回弹结束时会把过期的 x 写回轨道，轮播内容跳回旧位置、与圆点指示错位
-    gsap.killTweensOf(track);
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      gsap.set(track, { x, scale: 1 });
+      gsap.set(track, { x });
       return;
     }
     gsap.to(track, {
       x,
       duration: 0.48,
       ease: "power3.inOut",
+      overwrite: "auto",
       onComplete: () => {
-        /* 切换到位后的整体回弹，只动 scale 不碰 x：x 已是最终值，
-           即使这轮回弹被下一次 go() 杀掉也不会残留错误位置。 */
+        /* 切换到位后的整体回弹。禁用 clearProps：gsap 会连带清掉
+           translate 导致轮播弹回第一张；结束后显式写回完整位置兜底。 */
         gsap.fromTo(
           track,
           { scale: 1.012 },
           {
-            scale: 1, duration: 0.7, ease: "elastic.out(1.1, 0.4)", transformOrigin: "50% 62%",
+            scale: 1, duration: 0.75, ease: "elastic.out(1.1, 0.4)", transformOrigin: "50% 62%",
+            onComplete: () => gsap.set(track, { x, scale: 1 }),
           },
         );
       },

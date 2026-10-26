@@ -247,7 +247,7 @@ export function McpSim() {
         </div>
       </div>
       <p style={{ color: "var(--fg-dim)", fontSize: 13, marginBottom: 0 }}>
-        观察点：工具是「连接时批量注册、调用时逐个执行」的。换 Server 不用改模型代码——这就是 MCP 的意义。
+        观察点：经典形态下，工具是「连接时批量注册、调用时逐个执行」的（2026-07-28 版规范已加入按需工具检索与可缓存列表）。换 Server 不用改模型代码——这就是 MCP 的意义。
       </p>
     </SimulatorFrame>
   );
@@ -278,7 +278,7 @@ export function SkillSim() {
           策略 A：Skill 渐进加载
         </button>
         <button className={`pill ${strategy === "mcp" ? "active" : ""}`} onClick={() => setStrategy("mcp")}>
-          策略 B：工具全量常驻（MCP 常见形态）
+          策略 B：工具全量常驻（MCP 经典形态）
         </button>
         <button className="btn" onClick={() => setLoaded([])}>清空已加载</button>
       </div>
@@ -321,7 +321,7 @@ const PROMPT_RULES = [
 
 export function PromptSim() {
   const [text, setText] = useState(
-    "你是一个订票助手，帮我订机票。\n出发地北京，目的地上海，2026-10-20 出发。优先早上 8-10 点的航班。",
+    "你是一个订票助手，帮我订机票。\n出发地北京，目的地上海，2026-12-18 出发。优先早上 8-10 点的航班。",
   );
   const scores = PROMPT_RULES.map((r) => ({ ...r, hit: r.re.test(text) }));
   const total = scores.filter((s) => s.hit).length;
@@ -488,11 +488,11 @@ const ROUTER_TASKS: Task[] = [
   { id: "research", name: "🔬 深度研究", tin: 60000, tout: 8000, vol: 500, tier: "重" },
 ];
 
-// 每百万 token 单价（美元，示意值）：旗舰 / 标准 / 轻量
+// 每百万 token 单价（美元，2026-10 现价）：Opus 5.5 / Sonnet 5.5 / Haiku 5.5
 const PRICE = {
-  flagship: { in: 3, out: 15 },
-  standard: { in: 0.8, out: 4 },
-  mini: { in: 0.08, out: 0.4 },
+  flagship: { in: 4, out: 20 },
+  standard: { in: 2, out: 10 },
+  mini: { in: 0.1, out: 0.5 },
 };
 type ModelKey = "flagship" | "standard" | "mini";
 const MODEL_NAME: Record<ModelKey, string> = { flagship: "旗舰模型", standard: "标准模型", mini: "轻量模型" };
@@ -559,7 +559,7 @@ export function RouterSim() {
         )}
       </div>
       <p style={{ color: "var(--fg-dim)", fontSize: 13, marginBottom: 0 }}>
-        企业实践三板斧：① 分类/抽取类任务下放轻量模型；② 系统提示与工具定义吃提示缓存（1 折计价）；
+        企业实践三板斧：① 分类/抽取类任务下放轻量模型；② 系统提示与工具定义吃提示缓存（主流供应商约 1 折）；
         ③ 高频重复问句上语义缓存。切到「路由 + 缓存」看看能省多少——省下来的预算正好给深度研究这种重任务用旗舰模型。
       </p>
     </SimulatorFrame>

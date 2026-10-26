@@ -1,15 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Moon, Sun } from "lucide-react";
-import { useHashRoute, useProgress, useTheme, navState, probeViewTransitions } from "./hooks";
+import { useHashRoute, useProgress, useTheme } from "./hooks";
 import { ALL_LESSONS, STAGES_DATA, TOTAL_LESSONS, findLesson, lessonNeighbors } from "./types";
 import { GLOSSARY } from "./data";
-import { useActiveBox } from "./components/Slider";
-import { Home } from "./components/Home";
-import { CourseLayout, prefetchHeavyChunks } from "./components/Course";
-import { Sandbox } from "./components/Sandbox";
-import { Glossary } from "./components/Glossary";
-import { Lab } from "./components/Lab";
 
 /** 全站「企业实践」板块总数（数据驱动，课程增删自动更新） */
 const WORK_COUNT = STAGES_DATA.flatMap((s) => s.lessons).reduce(
@@ -17,19 +10,40 @@ const WORK_COUNT = STAGES_DATA.flatMap((s) => s.lessons).reduce(
   0,
 );
 
-/* 顶栏导航胶囊滑块：测量激活项位置，背景块滑动跟随（与全站 Tab/筛选滑块同语言） */
-function NavPill({ page, barRef }: { page: string; barRef: RefObject<HTMLDivElement | null> }) {
-  const { box, ready } = useActiveBox(barRef, `[data-nav="${page}"]`, page);
+/* 顶栏导航胶囊滑块：测量激活项位置，背景块滑动跟随（与课程页 Tab 滑块同语言） */
+function NavPill({ page }: { page: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [style, setStyle] = useState<{ x: number; w: number } | null>(null);
+
+  useEffect(() => {
+    const pill = ref.current;
+    const bar = pill?.parentElement;
+    if (!pill || !bar) return;
+    const measure = () => {
+      const el = bar.querySelector<HTMLAnchorElement>(`[data-nav="${page}"]`);
+      if (!el) return;
+      setStyle({ x: el.offsetLeft, w: el.offsetWidth });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [page]);
 
   return (
     <div
+      ref={ref}
       className="nav-pill"
-      data-ready={ready ? "1" : "0"}
-      style={box ? { transform: `translate(${box.x}px, -50%)`, width: box.w } : undefined}
+      style={style ? { transform: `translate(${style.x}px, -50%)`, width: style.w } : undefined}
       aria-hidden="true"
     />
   );
 }
+import { Home } from "./components/Home";
+import { CourseLayout, prefetchHeavyChunks } from "./components/Course";
+import { Sandbox } from "./components/Sandbox";
+import { Glossary } from "./components/Glossary";
+import { Lab } from "./components/Lab";
 
 /* 回到顶部：ref 直写显隐，滚动零重渲染 */
 function BackToTop() {
@@ -62,6 +76,25 @@ function BackToTop() {
   );
 }
 
+/* 品牌标识：渐变圆角徽标 + A 字形 + 灵感火花（与 favicon.svg 同源，配色随主题切换） */
+function BrandMark({ gid }: { gid: string }) {
+  return (
+    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+          <stop offset="0" style={{ stopColor: "var(--bm-a)" }} />
+          <stop offset="0.55" style={{ stopColor: "var(--bm-b)" }} />
+          <stop offset="1" style={{ stopColor: "var(--bm-c)" }} />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="9" fill={`url(#${gid})`} />
+      <path d="M9.8 22.4 15 9.9a1.07 1.07 0 0 1 1.98 0l5.2 12.5" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12.5 17.7h7" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="16" cy="5.4" r="1.7" fill="#fff" />
+    </svg>
+  );
+}
+
 /* applore 式页脚：链接矩阵 + 底栏 */
 function SiteFooter() {
   return (
@@ -69,7 +102,7 @@ function SiteFooter() {
       <div className="footer-inner">
         <div className="f-brand">
           <a className="brand" href="#/">
-            <span className="brand-dot" />
+            <BrandMark gid="bm-footer" />
             Agent 学堂
           </a>
           <p>
@@ -96,6 +129,7 @@ function SiteFooter() {
           <a href="https://modelcontextprotocol.io" target="_blank" rel="noreferrer">MCP 规范 ↗</a>
           <a href="https://github.com/anthropics/skills" target="_blank" rel="noreferrer">Agent Skills 仓库 ↗</a>
           <a href="https://platform.claude.com/docs" target="_blank" rel="noreferrer">Claude 文档 ↗</a>
+          <a href="https://github.com/cgbin24" target="_blank" rel="noreferrer">作者 GitHub @cgbin24 ↗</a>
         </div>
       </div>
       <div className="f-bottom">
@@ -110,7 +144,6 @@ export default function App() {
   const hash = useHashRoute();
   const { progress, mark, markEx, reset, serverSynced } = useProgress();
   const { theme, toggle } = useTheme();
-  const navLinksRef = useRef<HTMLDivElement>(null);
 
   const route = useMemo(() => {
     const parts = hash.replace(/^#\//, "").split("/").filter(Boolean);
@@ -121,7 +154,7 @@ export default function App() {
     return { page: "home" as const };
   }, [hash]);
 
-  const scrollToTop = useCallback(() => window.scrollTo({ top: 0, behavior: "instant" }), []);
+  const scrollToTop = useCallback(() => window.scrollTo({ top: 0 }), []);
   useEffect(scrollToTop, [route.page, route.key === undefined ? "" : route.key]);
 
   // 首屏就绪后空闲预取图示/模拟器分包：后续翻课、进沙盒零加载等待
@@ -129,20 +162,14 @@ export default function App() {
     prefetchHeavyChunks();
   }, []);
 
-  // 空闲时探测 View Transitions 健康度：决定主题/路由过渡走 VT 还是 CSS 兜底
-  useEffect(() => {
-    const t = setTimeout(probeViewTransitions, 1200);
-    return () => clearTimeout(t);
-  }, []);
-
   const nav = (
     <nav className="topnav">
       <a className="brand" href="#/">
-        <span className="brand-dot" />
+        <BrandMark gid="bm-nav" />
         Agent 学堂
       </a>
-      <div className="nav-links" ref={navLinksRef}>
-        <NavPill page={route.page} barRef={navLinksRef} />
+      <div className="nav-links">
+        <NavPill page={route.page} />
         <a href="#/" data-nav="home" className={route.page === "home" ? "active" : ""}>首页</a>
         <a
           href={`#/course/${ALL_LESSONS[0].lesson.key}`}
@@ -156,6 +183,18 @@ export default function App() {
         <a href="#/glossary" data-nav="glossary" className={route.page === "glossary" ? "active" : ""}>术语表</a>
       </div>
       <div className="nav-right">
+        <a
+          className="gh-link"
+          href="https://github.com/cgbin24"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="GitHub @cgbin24"
+          title="GitHub @cgbin24"
+        >
+          <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+          </svg>
+        </a>
         {serverSynced !== null && (
           <span
             className="sync-dot"
@@ -169,7 +208,7 @@ export default function App() {
           aria-checked={theme === "dark"}
           aria-label="切换主题"
           title={theme === "dark" ? "当前：暗色 · 点击切换亮色" : "当前：亮色 · 点击切换暗色"}
-          onClick={(e) => toggle({ x: e.clientX, y: e.clientY })}
+          onClick={toggle}
         >
           <Sun size={13} className="ts-ico ts-sun" />
           <span className="ts-knob" />
@@ -214,8 +253,7 @@ export default function App() {
   return (
     <div className="app">
       {nav}
-      {/* 本次导航由 VT 整页交叉过渡接管时不再叠加 CSS 入场动画（防双重动画） */}
-      <main className={navState.usedVt ? "main" : "main page-fade"} key={route.page + (route.key ?? "")}>{body}</main>
+      <main className="main page-fade" key={route.page + (route.key ?? "")}>{body}</main>
       <BackToTop />
       <SiteFooter />
     </div>

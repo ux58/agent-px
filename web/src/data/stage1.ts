@@ -22,9 +22,9 @@ export const STAGE1: Stage = {
           "模型的「知识」全部压缩在参数里，截止于训练日期。问它「昨天股市怎么样」，它只能编——术语叫幻觉（hallucination）。",
         ] },
         { type: "h3", text: "上下文窗口：模型的全部工作记忆" },
-        { type: "p", text: "模型每次生成，能「看见」的文字总量就是上下文窗口（context window），主流模型已到 128k~1M token。窗口内的一切——系统提示、对话历史、工具返回结果——对模型一视同仁。窗口外的东西等于不存在。" },
+        { type: "p", text: "模型每次生成，能「看见」的文字总量就是上下文窗口（context window），主流旗舰已到 200k~1M token（2026 年起 1M 级窗口已按标准价开放）。窗口内的一切——系统提示、对话历史、工具返回结果——对模型一视同仁。窗口外的东西等于不存在。" },
         { type: "table", head: ["概念", "类比", "开发要点"], rows: [
-          ["token", "文字的计量单位", "中文约 1 字 ≈ 1~2 token；API 按 token 计费"],
+          ["token", "文字的计量单位", "中文约 1 字 ≈ 0.5~2 token（随分词器而异）；API 按 token 计费"],
           ["上下文窗口", "工作内存", "超长对话要主动裁剪、压缩，不是无限累积"],
           ["系统提示 System Prompt", "岗位职责书", "模型每次生成都会看，放约束和规则的最佳位置"],
           ["幻觉", "一本正经地编", "靠联网检索、RAG、工具来治，不靠道德劝告"],
@@ -32,17 +32,8 @@ export const STAGE1: Stage = {
         { type: "quote", text: "一句话记住本课：模型 = 概率接龙 + 有限工作记忆。所有 AI 工程技巧，本质都是在管理「喂给它什么文字」。" },
         { type: "h3", text: "第一次 API 调用" },
         { type: "p", text: "看一个最小可用的调用（以 Claude API 为例，其他家结构几乎一样）：" },
-        { type: "code", lang: "typescript", code: `import Anthropic from "@anthropic-ai/sdk";\n\nconst client = new Anthropic(); // 从环境变量读 ANTHROPIC_API_KEY\n\nconst msg = await client.messages.create({\n  model: "claude-sonnet-4-5",\n  max_tokens: 1024,\n  system: "你是一个严谨的技术翻译。",        // 系统提示：角色设定\n  messages: [\n    { role: "user", content: "把这段话翻译成英文：上下文窗口是稀缺资源" },\n  ],\n});\n\nconsole.log(msg.content[0].text);` },
+        { type: "code", lang: "typescript", code: `import Anthropic from "@anthropic-ai/sdk";\n\nconst client = new Anthropic(); // 从环境变量读 ANTHROPIC_API_KEY\n\nconst msg = await client.messages.create({\n  model: "claude-sonnet-5-5",\n  max_tokens: 1024,\n  system: "你是一个严谨的技术翻译。",        // 系统提示：角色设定\n  messages: [\n    { role: "user", content: "把这段话翻译成英文：上下文窗口是稀缺资源" },\n  ],\n});\n\nconsole.log(msg.content[0].text);` },
         { type: "p", text: "messages 是一个数组，user / assistant 角色交替出现——这个数组将来会越滚越长，成为 Agent 的「历史」。记住这个形状，第二阶段它就是 Agent 的躯干。" },
-        { type: "work", title: "真实决策：2026 年怎么选模型（截至本课更新）", text: "新模型每月都在发，别背型号背方法。各家 API 都已收敛成「旗舰 / 标准 / 轻量」三个梯队，选型只需要三个问题：", list: [
-          "任务多难？开放式推理、长链路 Agent 用旗舰；分类、抽取、改写用轻量；介于两者用标准档——先拿你最难的真实任务试标准档，不够再升",
-          "延迟要求多高？实时对话看首 token 延迟（流式），离线批处理无所谓——延迟敏感场景轻量模型常胜过大模型",
-          "预算多少？按「每任务成本」而不是「每 token 单价」比较：长任务的循环次数比单价更决定账单（第 6 阶段成本课展开）",
-          "时效提醒：具体型号与价格以各家官方定价页为准（更新极快），本课程的选型方法比任何型号推荐都活得久",
-        ], code: `# 一个务实的起步配置（按此起步，用评测集验证后再调）
-- 旗舰档：复杂推理 / 多步 Agent 编排者        ← 占请求 ~10%
-- 标准档：默认生成 / 工具调用 / RAG 问答      ← 占请求 ~70%
-- 轻量档：意图分类 / 抽取 / 路由 / 缓存判定    ← 占请求 ~20%`, lang: "text" },
         { type: "exercise", ex: {
           kind: "quiz",
           q: "模型在回答「昨天发布的iPhone价格是多少」时编造了一个不存在的价格。最合理的解释和处理方式是？",
@@ -59,16 +50,6 @@ export const STAGE1: Stage = {
           kind: "blank",
           q: "控制模型输出随机性的参数叫_____（中英文均可），写代码生成时通常设为 0。",
           answers: ["temperature", "温度"],
-        } },
-        { type: "exercise", ex: {
-          kind: "match",
-          q: "把本课的核心概念和它的类比连起来：",
-          pairs: [
-            { left: "上下文窗口", right: "工作内存：装不下就忘事" },
-            { left: "系统提示", right: "岗位职责书：每次生成都读" },
-            { left: "token", right: "计费与计量单位" },
-            { left: "幻觉", right: "不知道也要接龙：治本靠给资料" },
-          ],
         } },
       ],
     },
@@ -114,18 +95,6 @@ export const STAGE1: Stage = {
             { left: "前置指令后置示例", right: "重要要求被模型忽略" },
           ],
         } },
-        { type: "exercise", ex: {
-          kind: "quiz",
-          q: "除了给一个「正确输出长这样」的示例外，再给一个「错误输出长这样，别这样」的反例。反例的主要价值是？",
-          options: [
-            "让提示词显得更专业",
-            "明确划出边界：模型对「不该做什么」的辨识度显著提升，对格式纠偏尤其有效",
-            "增加 token 消耗来提高质量",
-            "反例会教坏模型，永远不要给",
-          ],
-          answer: 1,
-          explain: "模型从对比中学习边界比从单一正例中学习更稳。正例给方向，反例画红线——这是结构化输出纠偏的标配组合。",
-        } },
       ],
     },
     {
@@ -170,15 +139,6 @@ export const STAGE1: Stage = {
           options: ["算，因为用了 LLM 和工具", "不算——流程是写死的，模型没有自主决策权，这是典型 Workflow", "算，只要加了记忆就算", "取决于用哪个模型"],
           answer: 1,
           explain: "判断标准是「下一步由谁决定」。模型只分类不决策 = 工作流；模型自己决定调用什么、何时停止 = Agent。",
-        } },
-        { type: "exercise", ex: {
-          kind: "match",
-          q: "Agent 定义的三个关键词，各自对应什么检查问题：",
-          pairs: [
-            { left: "循环 loop", right: "它是多轮迭代还是一次问答？" },
-            { left: "工具 tools", right: "它能影响外部世界吗？" },
-            { left: "自主决策 autonomy", right: "下一步做什么由模型还是 if-else 决定？" },
-          ],
         } },
       ],
     },

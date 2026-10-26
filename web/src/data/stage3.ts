@@ -16,19 +16,20 @@ export const STAGE3: Stage = {
         { type: "h3", text: "三个角色：Host、Client、Server" },
         { type: "ul", items: [
           "Host（宿主）：用户面对的 AI 应用，负责管理连接、鉴权与权限确认——它是企业数据的守门人。",
-          "Client（客户端）：宿主内每个 Server 连接的协议端点，一对一维持有状态会话。",
+          "Client（客户端）：宿主内每个 Server 连接的协议端点（2026-07-28 版规范起转向无状态请求，会话式长连接不再是强制要求）。",
           "Server（服务器）：封装某外部系统能力的轻量程序，暴露 tools / resources / prompts 三类原语。",
         ] },
-        { type: "p", text: "通信走 JSON-RPC 2.0，一次标准握手长这样：" },
+        { type: "p", text: "通信走 JSON-RPC 2.0。经典会话式握手长这样（存量部署最广的形态）：" },
         { type: "code", lang: "json", code: `// 1) initialize —— 握手：交换协议版本与能力
 {"jsonrpc":"2.0","id":1,"method":"initialize",
- "params":{"protocolVersion":"2025-06-18",
+ "params":{"protocolVersion":"2025-11-25",
    "capabilities":{"tools":{"listChanged":true}},
    "clientInfo":{"name":"claude-desktop","version":"1.2.3"}}}
 
 // 2) tools/call —— 真正干活：按名字调用，参数走 JSON Schema
 {"jsonrpc":"2.0","id":2,"method":"tools/call",
  "params":{"name":"get_order","arguments":{"orderId":"8841"}}}` },
+        { type: "p", text: "2026-07-28 版规范是分水岭：协议核心转向无状态——取消了 initialize 握手与会话 ID，每个请求自带版本与能力元数据，远程 Server 可以像普通 HTTP 服务一样水平扩容；同时新增多轮往返请求（MRTR）与扩展机制，Sampling / Roots 等客户端能力标记弃用。SDK 正在过渡，两种形态会在生产里共存一段时间——你握手要会读，无状态新范式也要心里有数。" },
         { type: "sim", name: "mcp" },
         { type: "h3", text: "三类原语，各管一摊" },
         { type: "table", head: ["原语", "是什么", "典型用法"], rows: [
@@ -61,17 +62,6 @@ policy:
           "限流按 Server × 租户双维度，防止某个 Agent 循环把下游打挂",
         ] },
         { type: "quote", text: "一句话理解 MCP：它不是模型能力，是「USB 接口」——设备（工具）和电脑（Agent）各自只造一次接口，插上就能用。生态价值大于技术价值。" },
-        { type: "work", title: "真实进展：MCP 生态现状（截至 2026-10）", text: "MCP 已从 Anthropic 一家的协议变成行业公共品，几个关键节点决定了你今天的选型环境：", list: [
-          "治理中立化：MCP 已交由 Linux Foundation 中立治理，创始成员覆盖主流模型厂商与开发者平台——不再有「绑某家模型」的顾虑",
-          "全行业采用：OpenAI、Google、Microsoft 相继宣布支持；Cursor、Claude Desktop/Code、各类 IDE 与企业平台均已内置 Host 能力，「写一次 Server 处处可用」已是现实",
-          "传输现代化：新版规范以 Streamable HTTP 取代早期的 HTTP+SSE 双通道，远程部署一个 Server 就是普通 Web 服务；本地场景仍用 stdio",
-          "安全补课：规范强化了 OAuth 2.1 授权流程与 URI 权限声明，配合本课网关方案正好补上企业最关心的鉴权短板",
-          "官方 Registry 出现：MCP 注册表（目录 + 分发元数据）解决「怎么找到可信 Server」的发现问题——选型时优先查注册表而非随手装来路不明的 Server",
-          "新原语 elicitation：Server 可以在会话中反向向用户征求补充信息（如缺字段时问一句），减少「工具因缺参失败→重试」的循环浪费",
-        ], code: `# 选型动作清单（2026-10 视角）
-- 新建集成：优先封装成 MCP Server（stdio 本地 / streamable-http 远程），而不是私有胶水
-- 选 Server：官方 Registry 优先 > 知名厂商发布 > 社区高星且近期维护；装前审它的工具清单与权限声明
-- 企业接入：经网关纳管（本课上一板块），直连仅限开发环境`, lang: "text" },
         { type: "exercise", ex: {
           kind: "quiz",
           q: "MCP 把 M×N 集成问题变成 M+N，本质原因是？",
@@ -94,18 +84,6 @@ policy:
             "客户端调 tools/list 拿到工具清单",
             "模型决策后客户端发 tools/call 执行",
           ],
-        } },
-        { type: "exercise", ex: {
-          kind: "quiz",
-          q: "MCP 官方 Registry（注册表）主要解决的问题是？",
-          options: [
-            "让模型推理更快",
-            "Server 的可信发现与分发元数据——去哪找、谁维护、什么版本，而不是随手安装来路不明的 Server",
-            "替代 MCP 网关做权限管控",
-            "给 Server 提供免费算力",
-          ],
-          answer: 1,
-          explain: "协议解决「怎么连」，注册表解决「去哪找、可不可信」。权限管控仍是网关/Host 的职责——两者互补。",
         } },
       ],
     },
@@ -181,16 +159,6 @@ META.json                          # 命中率与成功率统计（CI 更新）`
           q: "Skill「名字常驻 → 正文按需 → 附件再按需」的加载设计，术语叫渐进式加载，英文是_____（注意拼写）。",
           answers: ["progressive disclosure", "progressivedisclosure"],
         } },
-        { type: "exercise", ex: {
-          kind: "order",
-          q: "一次任务中 Skill 三级内容的实际加载顺序（成本从低到高）：",
-          steps: [
-            "常驻：模型看到所有 Skill 的名字与一句话描述（合计数百 token）",
-            "路由：模型判断当前任务匹配某个 Skill",
-            "加载：读取该 Skill 的 SKILL.md 正文（1~3k token）",
-            "按需：仅在真正要参考时读取模板/范例等重附件",
-          ],
-        } },
       ],
     },
     {
@@ -226,7 +194,7 @@ META.json                          # 命中率与成功率统计（CI 更新）`
           "会话级（默认开）：消息历史 + 摘要，随会话过期（如 30 天），用户可随时查看与删除——合规底线",
           "用户级（默认关，显式授权）：偏好与关键事实（「对花生过敏」），写入前模型先复述确认，防止记错",
           "组织级（管理员治理）：团队术语表、客户档案、SLA 规则——由数据Owner 维护，Agent 只读",
-          "遗忘策略：每条记忆带 TTL 与来源；用户删除请求 72 小时内级联清除（GDPR 类要求）；被引用过的记忆删除时要检查下游摘要",
+          "遗忘策略：每条记忆带 TTL 与来源；用户删除请求须在承诺时限内级联清除（GDPR 类法规要求「无不当延迟」，业界通常承诺 30 天内全链路生效）；被引用过的记忆删除时要检查下游摘要",
           "隔离红线：用户级记忆严禁跨租户检索命中——语义检索必须带 tenant 过滤，这与语义缓存同款要求",
         ], code: `// 用户级记忆写入前的确认流（防记错 + 可审计）
 async function saveFact(userId: string, fact: string, ctx: Ctx) {
@@ -261,18 +229,6 @@ async function saveFact(userId: string, fact: string, ctx: Ctx) {
             { left: "「本仓库禁用 date-fns」", right: "程序性记忆（项目 AGENTS.md）" },
           ],
         } },
-        { type: "exercise", ex: {
-          kind: "quiz",
-          q: "CLAUDE.md / AGENTS.md 这类项目记忆文件，工程上要求进版本库、走评审。核心理由是？",
-          options: [
-            "文件太大本地放不下",
-            "程序性记忆会直接改变 Agent 行为——必须像代码一样可评审、可回滚、可追责，而不是某个人的私藏配置",
-            "版本库有免费备份",
-            "为了让模型读得更快",
-          ],
-          answer: 1,
-          explain: "记忆文件 = Agent 的行为规范。私藏记忆会让同一任务在不同人机器上产生不同行为，且出错无法溯源。进版本库 = 团队共识 + 变更留痕。",
-        } },
       ],
     },
     {
@@ -280,7 +236,7 @@ async function saveFact(userId: string, fact: string, ctx: Ctx) {
       title: "协议生态：MCP 之外，Agent 怎么互联",
       minutes: 13,
       blocks: [
-        { type: "p", text: "MCP 解决的是 Agent ↔ 工具的连接。但当你的公司里有多个 Agent——客服 Agent、数据 Agent、运维 Agent——它们之间怎么互相发现、互相委托任务？这是 2025 年协议生态的新前沿：A2A（Agent2Agent）等 Agent 互联协议，以及描述 Agent 能力的标准「名片」Agent Card。" },
+        { type: "p", text: "MCP 解决的是 Agent ↔ 工具的连接。但当你的公司里有多个 Agent——客服 Agent、数据 Agent、运维 Agent——它们之间怎么互相发现、互相委托任务？答案是 A2A（Agent2Agent）：2025 年由 Google 发起并捐赠给 Linux Foundation，2026 年已演进到 1.0，成为 Agent 互联的事实标准；配套的还有描述 Agent 能力的标准「名片」Agent Card。" },
         { type: "h3", text: "两条协议轴：别混为一谈" },
         { type: "table", head: ["协议", "连接的是", "解决什么"], rows: [
           ["MCP", "Agent ↔ 工具/数据", "给 Agent 接入手脚：files、API、数据库"],
@@ -289,21 +245,26 @@ async function saveFact(userId: string, fact: string, ctx: Ctx) {
         ] },
         { type: "p", text: "A2A 由 Google 发起、已捐赠给 Linux Foundation 做中立治理，与 MCP 是互补而非竞争关系：一个 Agent 完全可以既用 MCP 接工具、又用 A2A 接同行。核心概念有三个：" },
         { type: "ul", items: [
-          "Agent Card：Agent 的自描述 JSON 文档（端点、能力、鉴权方式），通常挂在 /.well-known/agent.json——发现的前提是先拿到名片。",
+          "Agent Card：Agent 的自描述 JSON 文档（端点、能力、鉴权方式），挂在 /.well-known/agent-card.json（0.3 版起，旧路径 agent.json 已废弃）——发现的前提是先拿到名片。",
           "Task：跨 Agent 委托的工作单元，有生命周期（提交→处理→完成/失败），长任务可流式上报进度——比「一次 RPC」更贴合 Agent 工作形态。",
           "Artifact：任务产物（文档、数据集），与消息流分离，方便落盘与审计。",
         ] },
-        { type: "code", lang: "json", code: `// /.well-known/agent.json —— Agent Card 示意
+        { type: "code", lang: "json", code: `// /.well-known/agent-card.json —— Agent Card 示意（A2A v1.0）
 {
   "name": "refund-processor",
   "description": "处理订单退款审批：校验政策、执行退款、记录审计",
   "url": "https://agents.internal/refund",
+  "protocolVersion": "1.0",
   "capabilities": { "streaming": true, "pushNotifications": true },
   "skills": [
     { "id": "refund", "name": "订单退款",
       "inputModes": ["text"], "outputModes": ["text"] }
   ],
-  "auth": { "schemes": ["oauth2"] }
+  "securitySchemes": {
+    "corporate": { "type": "openIdConnect",
+      "openIdConnectUrl": "https://sso.internal/.well-known/openid-configuration" }
+  },
+  "security": [{ "corporate": ["openid", "profile"] }]
 }` },
         { type: "h3", text: "什么时候真的需要 A2A" },
         { type: "p", text: "冷静判断：大多数团队现阶段只需要 MCP + 内部编排（第 4 阶段的编排者-工人模式，跑在同一进程或同一队列里）。A2A 的价值出现在「跨组织边界」或「异构 Agent 平台」场景：采购方 Agent 对接供应商 Agent、集团内不同事业部的 Agent 互访。先问三个问题：" },
@@ -340,11 +301,6 @@ async function saveFact(userId: string, fact: string, ctx: Ctx) {
             { left: "同一服务内的编排者派工人", right: "内部编排（无需对外协议）" },
             { left: "声明「本 Agent 支持流式返回」", right: "Agent Card 的 capabilities 字段" },
           ],
-        } },
-        { type: "exercise", ex: {
-          kind: "blank",
-          q: "A2A 协议中，Agent 的自描述名片（JSON 文档）按约定挂在网站的固定路径 _____ 上（以 /. 开头）。",
-          answers: ["/.well-known/agent.json", ".well-known/agent.json", "/.well-known/", "/.well-known"],
         } },
       ],
     },

@@ -21,26 +21,25 @@ import {
 import type { Block, Lesson, LessonProgress, ProgressMap, Stage } from "../types";
 import { STAGES_DATA, exerciseCount } from "../types";
 import { ExerciseView } from "./Exercise";
-import { useActiveBox } from "./Slider";
 
 /* 模拟器与图示库均为大模块：懒加载分包，首屏不下载（约 -45KB gzip 前体积） */
-/* 懒加载重试包装：chunk 404（部署更新后旧页面引用失效 chunk）时先原地重试一次，
-   仍失败则整页自愈刷新（重新拿 index.html 换到新 chunk 名）。
-   按 5s 时间戳节流防刷新循环：同一失效只会刷一次，但之后新出现的失效仍能自愈，
-   不再用「一次会话仅一次」的标记（旧标记会让后续失效永久白屏，只能手动刷新）。 */
-let lastHealAt = 0;
+/* 懒加载重试包装：chunk 404（部署更新后旧页面引用失效 chunk）时自动重试，
+   重试仍失败则触发一次性自愈刷新（加载新 index.html 拿到新 chunk 名）。
+   这是「发布后旧标签页白屏、刷新才恢复」的标准解法。 */
+let selfHealed = false;
 function importWithRetry<T>(load: () => Promise<T>): () => Promise<T> {
   return async () => {
     try {
       return await load();
     } catch (err) {
-      // 等一小会儿（部署窗口可能正在进行）再重试一次
+      // 等一小会儿（部署窗口可能正在进行），带 cache-bust 重试一次
       await new Promise((r) => setTimeout(r, 300));
       try {
         return await load();
       } catch {
-        if (Date.now() - lastHealAt > 5000) {
-          lastHealAt = Date.now();
+        if (!selfHealed && !sessionStorage.getItem("agentpx.healed")) {
+          selfHealed = true;
+          sessionStorage.setItem("agentpx.healed", "1");
           window.location.reload();
         }
         throw err;
@@ -392,9 +391,6 @@ export function CourseLayout({
   const [tocOpen, setTocOpen] = useState(false);
   const exTotal = exerciseCount(lesson);
   const exSolved = p.quiz ? exTotal : (p.ex?.length ?? 0);
-  // 目录激活项滑块：随当前课在目录里滑动跟随
-  const tocRef = useRef<HTMLElement>(null);
-  const { box: tocBox, ready: tocReady } = useActiveBox(tocRef, "a.active", lesson.key);
 
   // 阅读打点：进入课程页 5 秒后记「已读」
   useEffect(() => {
@@ -418,13 +414,7 @@ export function CourseLayout({
     <div className="course-grid">
       <ReadProgress />
 
-      <aside ref={tocRef} className={`toc ${tocOpen ? "open" : ""}`}>
-        <span
-          className="toc-slider"
-          data-ready={tocReady ? "1" : "0"}
-          style={tocBox ? { transform: `translate(${tocBox.x}px, ${tocBox.y}px)`, width: tocBox.w, height: tocBox.h } : undefined}
-          aria-hidden="true"
-        />
+      <aside className={`toc ${tocOpen ? "open" : ""}`}>
         <button className="btn toc-toggle-close" onClick={() => setTocOpen(false)}><X size={15} /> 收起目录</button>
         <div style={{ padding: "0 4px 10px", fontSize: 12.5, color: "var(--fg-dim)" }}>
           总进度 {idx + 1} / {total}

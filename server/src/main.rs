@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tower_http::compression::CompressionLayer;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 /// 学习进度记录。前端只有一个逻辑用户，profileId 预留多用户扩展。
@@ -22,6 +21,13 @@ struct ProgressRecord {
     updated_at: u64,
 }
 
+/// 文件持久化存储：每个 profile 一个 JSON 文件（{data-dir}/{profile_id}.json），
+/// 启动时全量加载进内存，写入时先落盘（临时文件 + rename 原子替换）再更新内存。
+struct Store {
+    dir: PathBuf,
+    profiles: RwLock<HashMap<String, ProgressRecord>>,
+}
+
 /// profile_id 只允许字母数字下划线连字符（1~64 位），同时是文件名白名单，杜绝路径穿越。
 fn valid_profile(id: &str) -> bool {
     (1..=64).contains(&id.len())
@@ -30,132 +36,7 @@ fn valid_profile(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/* ---------- 存储层：两种实现，同一套异步接口 ----------
-   1) FileStore：本地 data-dir 的 JSON 文件（默认，开发/自托管用，数据可持久保留）
-   2) Postgres：sqlx + rustls 连 Neon 等托管库（部署在无持久磁盘的平台时用，
-      设置 DATABASE_URL 即启用；启动时自动建表）
-   免费容器平台（Render Free 等）文件系统随重启清空，进度必须外置数据库。 */
-
-type PgPool = sqlx::PgPool;
-
-enum ProgressStore {
-    File(FileStore),
-    Postgres(PgPool),
-}
-
-impl ProgressStore {
-    fn kind(&self) -> &'static str {
-        match self {
-            ProgressStore::File(_) => "file",
-            ProgressStore::Postgres(_) => "postgres",
-        }
-    }
-
-    /// 连接 Postgres 并确保表存在（幂等，可重复启动）
-    async fn connect_postgres(url: &str) -> Result<Self, sqlx::Error> {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(4)
-            .acquire_timeout(std::time::Duration::from_secs(8))
-            .connect(url)
-            .await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS progress (
-                 profile_id  TEXT PRIMARY KEY,
-                 data        TEXT NOT NULL,
-                 updated_at  BIGINT NOT NULL
-             )",
-        )
-        .execute(&pool)
-        .await?;
-        Ok(ProgressStore::Postgres(pool))
-    }
-
-    async fn get(&self, profile_id: &str) -> Result<Option<ProgressRecord>, String> {
-        match self {
-            ProgressStore::File(s) => Ok(s.profiles.read().await.get(profile_id).cloned()),
-            ProgressStore::Postgres(pool) => {
-                let row: Option<(String, i64)> =
-                    sqlx::query_as("SELECT data, updated_at FROM progress WHERE profile_id = $1")
-                        .bind(profile_id)
-                        .fetch_optional(pool)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                Ok(row.map(|(data, updated_at)| ProgressRecord {
-                    profile_id: profile_id.to_string(),
-                    data,
-                    updated_at: updated_at.max(0) as u64,
-                }))
-            }
-        }
-    }
-
-    /// 返回是否为新插入（决定 201/200，与文件版语义一致）
-    async fn put(&self, rec: &ProgressRecord) -> Result<bool, String> {
-        match self {
-            ProgressStore::File(s) => {
-                let mut guard = s.profiles.write().await;
-                // 先落盘再更新内存：磁盘失败时内存保持原状，避免出现内存有、重启即丢的假同步。
-                if let Err(e) = s.persist(rec) {
-                    return Err(e.to_string());
-                }
-                Ok(guard.insert(rec.profile_id.clone(), rec.clone()).is_none())
-            }
-            ProgressStore::Postgres(pool) => {
-                // 先查存在性再 upsert：避免依赖 xmax 之类的方言技巧，两次往返对进度写入无感
-                let existed: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM progress WHERE profile_id = $1)")
-                    .bind(&rec.profile_id)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                sqlx::query(
-                    "INSERT INTO progress (profile_id, data, updated_at)
-                     VALUES ($1, $2, $3)
-                     ON CONFLICT (profile_id)
-                     DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
-                )
-                .bind(&rec.profile_id)
-                .bind(&rec.data)
-                .bind(rec.updated_at as i64)
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?;
-                Ok(!existed)
-            }
-        }
-    }
-
-    async fn remove(&self, profile_id: &str) -> Result<bool, String> {
-        match self {
-            ProgressStore::File(s) => {
-                let mut guard = s.profiles.write().await;
-                let existed = guard.remove(profile_id).is_some();
-                drop(guard);
-                if existed {
-                    s.remove_file(profile_id);
-                }
-                Ok(existed)
-            }
-            ProgressStore::Postgres(pool) => {
-                let n = sqlx::query("DELETE FROM progress WHERE profile_id = $1")
-                    .bind(profile_id)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .rows_affected();
-                Ok(n > 0)
-            }
-        }
-    }
-}
-
-/// 本地文件存储：每个 profile 一个 JSON 文件（{data-dir}/{profile_id}.json），
-/// 启动时全量加载进内存，写入时先落盘（临时文件 + rename 原子替换）再更新内存。
-struct FileStore {
-    dir: PathBuf,
-    profiles: RwLock<HashMap<String, ProgressRecord>>,
-}
-
-impl FileStore {
+impl Store {
     fn open(dir: PathBuf) -> std::io::Result<Self> {
         std::fs::create_dir_all(&dir)?;
         let mut profiles = HashMap::new();
@@ -198,7 +79,7 @@ impl FileStore {
         Ok(())
     }
 
-    fn remove_file(&self, profile: &str) {
+    fn remove(&self, profile: &str) {
         let _ = std::fs::remove_file(self.file_of(profile));
     }
 }
@@ -222,8 +103,19 @@ async fn async_main() {
     let args: Vec<String> = std::env::args().collect();
     let config = Config::parse(&args);
 
-    let store = Arc::new(init_store(&config).await);
-    println!("progress storage: {} ({})", store.kind(), storage_location(&config));
+    let store = Arc::new(
+        Store::open(config.data_dir.clone()).unwrap_or_else(|e| {
+            panic!(
+                "failed to init progress storage at {}: {e}",
+                config.data_dir.display()
+            )
+        }),
+    );
+    println!(
+        "progress storage: {} ({} profile(s) loaded)",
+        config.data_dir.display(),
+        store.profiles.read().await.len()
+    );
 
     // API 路由：进度读写 + 健康检查
     let api = Router::new()
@@ -251,8 +143,6 @@ async fn async_main() {
         }
     }
 
-    // 响应压缩 gzip：前端 JS/CSS 传输体积约 -65%，加载显著提速（默认谓词已排除图片等类型）
-    app = app.layer(CompressionLayer::new());
     app = app.layer(CorsLayer::permissive());
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -268,41 +158,6 @@ struct Config {
     port: u16,
     dist_dir: Option<PathBuf>,
     data_dir: PathBuf,
-}
-
-/// 存储初始化：设置了 DATABASE_URL 用 Postgres（托管平台），否则回退本地文件（开发/自托管）。
-async fn init_store(config: &Config) -> ProgressStore {
-    let url = std::env::var("DATABASE_URL")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    match url {
-        Some(url) => {
-            println!("DATABASE_URL detected, connecting to Postgres ...");
-            ProgressStore::connect_postgres(&url)
-                .await
-                .unwrap_or_else(|e| panic!("failed to init postgres storage: {e:#}"))
-        }
-        None => ProgressStore::File(
-            FileStore::open(config.data_dir.clone()).unwrap_or_else(|e| {
-                panic!(
-                    "failed to init progress storage at {}: {e}",
-                    config.data_dir.display()
-                )
-            }),
-        ),
-    }
-}
-
-fn storage_location(config: &Config) -> String {
-    if std::env::var("DATABASE_URL")
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-    {
-        "postgres".to_string()
-    } else {
-        config.data_dir.display().to_string()
-    }
 }
 
 impl Config {
@@ -351,39 +206,30 @@ impl Config {
     }
 }
 
-async fn health(State(store): State<Arc<ProgressStore>>) -> Json<serde_json::Value> {
+async fn health(State(store): State<Arc<Store>>) -> Json<serde_json::Value> {
+    let count = store.profiles.read().await.len();
     Json(serde_json::json!({
         "status": "ok",
         "service": "agent-school-server",
         "version": env!("CARGO_PKG_VERSION"),
-        "storage": store.kind(),
+        "storage": "file",
+        "profiles": count,
     }))
 }
 
-/// 数据库类错误的统一 500 响应
-fn storage_error(e: String) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": format!("storage: {e}") })),
-    )
-        .into_response()
-}
-
 async fn get_progress(
-    State(store): State<Arc<ProgressStore>>,
+    State(store): State<Arc<Store>>,
     Path(profile_id): Path<String>,
 ) -> Response {
     if !valid_profile(&profile_id) {
         return (StatusCode::BAD_REQUEST, "invalid profile id").into_response();
     }
-    match store.get(&profile_id).await {
-        Ok(rec) => Json(rec.unwrap_or_default()).into_response(),
-        Err(e) => storage_error(e),
-    }
+    let guard = store.profiles.read().await;
+    Json(guard.get(&profile_id).cloned().unwrap_or_default()).into_response()
 }
 
 async fn put_progress(
-    State(store): State<Arc<ProgressStore>>,
+    State(store): State<Arc<Store>>,
     Path(profile_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
@@ -410,56 +256,58 @@ async fn put_progress(
         updated_at: now,
     };
 
-    match store.put(&record).await {
-        Ok(true) => (StatusCode::CREATED, Json(record)).into_response(),
-        Ok(false) => (StatusCode::OK, Json(record)).into_response(),
-        Err(e) => storage_error(e),
+    let mut guard = store.profiles.write().await;
+    // 先落盘再更新内存：磁盘失败时内存保持原状，避免出现内存有、重启即丢的假同步。
+    if let Err(e) = store.persist(&record) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("persist failed: {e}") })),
+        )
+            .into_response();
     }
+    let status = if guard.insert(profile_id, record.clone()).is_none() {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    (status, Json(record)).into_response()
 }
 
 async fn clear_progress(
-    State(store): State<Arc<ProgressStore>>,
+    State(store): State<Arc<Store>>,
     Path(profile_id): Path<String>,
 ) -> Response {
     if !valid_profile(&profile_id) {
         return (StatusCode::BAD_REQUEST, "invalid profile id").into_response();
     }
-    match store.remove(&profile_id).await {
-        Ok(existed) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "cleared": existed })),
-        )
-            .into_response(),
-        Err(e) => storage_error(e),
+    let mut guard = store.profiles.write().await;
+    let existed = guard.remove(&profile_id).is_some();
+    drop(guard);
+    if existed {
+        store.remove(&profile_id);
     }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "cleared": existed })),
+    )
+        .into_response()
 }
 
 // ---- SPA fallback：非 API 请求找不到文件时返回 index.html ----
-// 缓存策略（解决「发布新版后旧标签页白屏、要手动刷新才恢复」）：
-//   /assets/* 文件名带内容哈希 → 允许长缓存 immutable，改版必然换名；
-//   index.html 等入口文件 → no-cache，每次都向服务器重新校验，
-//   保证浏览器总能拿到引用最新 chunk 的入口，不再出现新旧引用错配。
 fn fallback_file(dist: PathBuf) -> axum::routing::MethodRouter {
     axum::routing::any(move |uri: Uri| {
         let dist = dist.clone();
         async move {
             let path = percent_decode(uri.path());
-            let is_asset = path.starts_with("/assets/");
             let full = dist.join(path.trim_start_matches('/'));
             // 防目录穿越
             if full.starts_with(&dist) && full.is_file() {
                 match tokio::fs::read(&full).await {
                     Ok(bytes) => {
                         let mime = mime_guess(&full);
-                        let cache = if is_asset {
-                            "public, max-age=31536000, immutable"
-                        } else {
-                            "no-cache"
-                        };
                         return Response::builder()
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, mime)
-                            .header(header::CACHE_CONTROL, cache)
                             .body(axum::body::Body::from(bytes))
                             .unwrap();
                     }
@@ -470,7 +318,6 @@ fn fallback_file(dist: PathBuf) -> axum::routing::MethodRouter {
                 Ok(bytes) => Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-                    .header(header::CACHE_CONTROL, "no-cache")
                     .body(axum::body::Body::from(bytes))
                     .unwrap(),
                 Err(_) => (StatusCode::NOT_FOUND, "404: build web/ first").into_response(),

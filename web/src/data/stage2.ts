@@ -22,7 +22,7 @@ export const STAGE2: Stage = {
         ] },
         { type: "sim", name: "loop" },
         { type: "h3", text: "最小 Agent 循环（可直接抄走跑）" },
-        { type: "code", lang: "typescript", code: `async function runAgent(goal: string, maxSteps = 10) {\n  const messages = [{ role: "user", content: goal }];\n\n  for (let step = 0; step < maxSteps; step++) {\n    const res = await client.messages.create({\n      model: "claude-sonnet-4-5",\n      max_tokens: 1024,\n      system: SYSTEM_PROMPT,\n      tools: TOOLS,               // 工具定义，下一课细讲\n      messages,\n    });\n\n    messages.push({ role: "assistant", content: res.content });\n\n    // 模型不再要工具 → 它认为任务完成\n    if (res.stop_reason !== "tool_use") {\n      return res.content[0].text; // 最终答案\n    }\n\n    // 执行模型点名的每一个工具，结果回填\n    const toolResults = [];\n    for (const block of res.content) {\n      if (block.type === "tool_use") {\n        const result = await executeTool(block.name, block.input);\n        toolResults.push({\n          type: "tool_result",\n          tool_use_id: block.id,\n          content: String(result),   // 报错也如实回填\n        });\n      }\n    }\n    messages.push({ role: "user", content: toolResults });\n  }\n\n  return "已达步数上限，任务未完成"; // 护栏兜底\n}` },
+        { type: "code", lang: "typescript", code: `async function runAgent(goal: string, maxSteps = 10) {\n  const messages = [{ role: "user", content: goal }];\n\n  for (let step = 0; step < maxSteps; step++) {\n    const res = await client.messages.create({\n      model: "claude-sonnet-5-5",\n      max_tokens: 1024,\n      system: SYSTEM_PROMPT,\n      tools: TOOLS,               // 工具定义，下一课细讲\n      messages,\n    });\n\n    messages.push({ role: "assistant", content: res.content });\n\n    // 模型不再要工具 → 它认为任务完成\n    if (res.stop_reason !== "tool_use") {\n      return res.content[0].text; // 最终答案\n    }\n\n    // 执行模型点名的每一个工具，结果回填\n    const toolResults = [];\n    for (const block of res.content) {\n      if (block.type === "tool_use") {\n        const result = await executeTool(block.name, block.input);\n        toolResults.push({\n          type: "tool_result",\n          tool_use_id: block.id,\n          content: String(result),   // 报错也如实回填\n        });\n      }\n    }\n    messages.push({ role: "user", content: toolResults });\n  }\n\n  return "已达步数上限，任务未完成"; // 护栏兜底\n}` },
         { type: "work", title: "生产级循环加固：重试、超时、追踪一个都不能少", text: "课程示例是教学版；生产循环至少要包上这四层。真实现长这样：", lang: "typescript", code: `// 每步工具调用统一走这个包装器
 async function callToolSafe(name: string, input: unknown, ctx: RunCtx) {
   return withSpan(\`tool:\${name}\`, async () => {            // 1) 追踪：每步一个 span
@@ -39,17 +39,6 @@ async function callToolSafe(name: string, input: unknown, ctx: RunCtx) {
           "每次循环结束记录 span 属性：step、tokens、latency——线上排查全靠它",
         ] },
         { type: "quote", text: "读三遍这段代码：市面上 90% 的 Agent 框架，剥掉封装后就是这 30 行。框架提供的是工程便利（沙箱、权限、日志），不是魔法。" },
-        { type: "work", title: "真实标杆：Claude Code 的循环工程（Anthropic 公开复盘）", text: "Claude Code 是目前最成功的终端编程 Agent。Anthropic 工程团队公开复盘过几个反直觉的设计决策，全都关乎「循环怎么做得可靠」：", list: [
-          "克制地只给它约 20 个核心工具：工具不在多——早期甚至砍掉过子代理，宁可让主循环直接读文件，因为跨上下文交接的出错率远高于多花点 token",
-          "把 bash 当万能底座：读写、搜索、跑测试尽量经 bash 完成，一个工具覆盖一千种长尾操作，比为每个操作造专用工具更稳",
-          "多个文件操作工具合并成一个带子命令的统一工具：模型选择「用哪个工具」的出错率，高于选择「一个工具的哪个子命令」",
-          "上下文满了不硬切：自动 compact（摘要压缩）保任务连续性，而不是悄悄丢历史",
-          "每个会话有可恢复的检查点：试错失败可回退到上一个好状态再试别的路径——把「自我纠错」从提示词口号变成机制",
-        ], code: `// Anthropic 复盘中的原话大意：
-// "我们试过各种花哨的编排，最后胜出的是最朴素的：
-//  一个主循环 + 一小套打磨过的工具 + 可靠的上下文管理。"
-// 对应本课：循环四要素（停止条件/结果回填/错误即信息/状态即消息列表）
-// 每一条在 Claude Code 里都有对应机制。`, lang: "text" },
         { type: "exercise", ex: {
           kind: "quiz",
           q: "Agent 执行工具时报错了（比如文件不存在）。工程上正确的处理是？",
@@ -66,17 +55,6 @@ async function callToolSafe(name: string, input: unknown, ctx: RunCtx) {
           kind: "blank",
           q: "为了防止 Agent 失控空转，循环里必须设置最大步数（或 token 预算），术语叫_____护栏（填写中文两个字）。",
           answers: ["护栏", "熔断", "安全", "guardrail", "budget"],
-        } },
-        { type: "exercise", ex: {
-          kind: "order",
-          q: "Agent 循环一「步」的完整时序：",
-          steps: [
-            "带着全部历史与工具定义调用 LLM",
-            "模型回复 stop_reason=tool_use 并给出工具名和参数",
-            "执行器运行工具（可能成功也可能报错）",
-            "结果（含报错文本）作为 tool_result 追加进消息列表",
-            "再次调用 LLM，它基于结果决定下一步",
-          ],
         } },
       ],
     },
@@ -119,24 +97,6 @@ const getOrder = defineTool({
           ["报错", "Error code -2", "『未找到用户 42，现有用户：7, 19』"],
         ] },
         { type: "quote", text: "一个诊断技巧：Agent 行为怪异时，先打印它「看到的工具定义」和「工具返回的原文」。八成问题出在这两处，而不是模型本身。" },
-        { type: "work", title: "真实标杆：Anthropic 的工具设计守则（官方工程博客）", text: "Anthropic 发布过专门的文章《为 AI 智能体编写高效的工具》（Writing effective tools for AI agents），核心结论与本课军规一一对应，可直接当评审清单用：", list: [
-          "为模型设计，而不是为人设计：命名与参数结构要「一眼可猜」，模型是用 token 思考的新同事——它没读过你的内部文档",
-          "命名空间防冲突：工具名带领域前缀（repo_search / web_search），描述里写清与近义工具的分工",
-          "返回结果可分页、可续读：大结果返回「摘要 + 总数 + 续读游标」，而不是一次倾倒——对应本课「返回摘要而非全量」",
-          "token 感知：工具响应是上下文的头号杀手，按「每千次调用的 token 成本」审视每个工具的返回结构",
-          "给工具留演化空间：语义化版本 + 弃用公告期，Schema 变更先灰度——和 REST API 治理同一套纪律",
-        ], code: `// 文章中的反例 → 正例（返回结构）
-// 反例：一次返回 5000 行日志全文
-{ "logs": ["...(5000 lines)..."] }
-// 正例：摘要 + 分页游标，模型按需续读
-{ "summary": "error rate spike at 14:02 (312 errors/min)",
-  "total": 5000, "returned": 50,
-  "next_cursor": "eyJvIjo1MH0", "hint": "可带 cursor 续取下 50 行" }`, lang: "json" },
-        { type: "exercise", ex: {
-          kind: "blank",
-          q: "工具定义里描述参数类型与必填项的标准格式叫 _____（两个英文单词，中间有空格）。",
-          answers: ["json schema", "jsonschema"],
-        } },
         { type: "exercise", ex: {
           kind: "quiz",
           q: "你的 Agent 有 18 个工具，模型经常选错。最优先的改进是？",
@@ -174,11 +134,11 @@ const getOrder = defineTool({
         { type: "h3", text: "四种治理手段，按性价比排序" },
         { type: "ul", items: [
           "写入文件（offload）：大结果落盘，上下文只留一行路径引用。一劳永逸，工程上首选。",
-          "历史压缩（compaction）：把旧对话摘要成一段「已完成工作纪要」，替换原文。Claude Code 的 compact 就是这个。",
+          "历史压缩（compaction）：把旧对话摘要成一段「已完成工作纪要」，替换原文。Claude Code 的 /compact 就是这个；2026 年起 Claude API 也原生提供 compaction（Opus 4.6+ 可让模型自行摘要上下文）。",
           "裁剪（trimming）：按策略丢弃最老或最大的消息。实现最简单，但可能丢关键信息。",
           "子代理隔离（sub-agent isolation）：派一个子 Agent 去做脏活（读 20 个文件），只把 300 字结论带回来。牺牲 token 换主上下文洁净。",
         ] },
-        { type: "work", title: "上下文预算表：给每类内容定「户口」", text: "成熟的 Agent 团队会给窗口里每种内容设预算上限，就像给程序设内存配额。一张真实项目的预算表长这样（128k 窗口）：", list: [
+        { type: "work", title: "上下文预算表：给每类内容定「户口」", text: "成熟的 Agent 团队会给窗口里每种内容设预算上限，就像给程序设内存配额。一张真实项目的预算表长这样（以 128k 档为例；2026 年主流窗口已是 200k~1M，预算思路不变、余量更宽）：", list: [
           "系统提示 + 工具定义：≤ 8k（提示缓存覆盖，现金成本低但要占窗口）",
           "任务目标 + 计划 Todo：≤ 2k（常驻，压缩时必须保留）",
           "对话历史：≤ 20k，超限触发摘要压缩（保留结论 + 最近 5 轮原文）",
@@ -189,21 +149,6 @@ const getOrder = defineTool({
 // 2. 摘：旧对话 → 一段「已完成工作 + 关键结论 + 文件路径」纪要
 // 3. 保：任务目标、计划、最近 2 轮完整原文 —— 用户刚说的话一个字都不能摘`, lang: "text" },
         { type: "quote", text: "检验你上下文工程水平的一道面试题：工具返回了 8000 token 的日志，接下来三步你怎么设计？——参考答案：落盘存全文 → 上下文写「已存 /tmp/x.log，共 8000 行，前 10 行见下」→ 需要细节时按行号读取。" },
-        { type: "work", title: "真实标杆：Manus 的 KV 缓存命中率「北极星」经验", text: "Manus 团队公开过一篇被广泛引用的上下文工程复盘，把 KV 缓存命中率当作 Agent 的北极星指标——缓存未命中意味着整段前缀重新计价重算，既是钱也是延迟。六条经验（截至本课更新）：", list: [
-          "保持缓存前缀稳定：系统提示、工具定义等不变内容放最前；绝不在对话中途往前面插内容（时间戳、随机 ID 都是缓存杀手）",
-          "只追加，不改写：上下文设计成 append-only；旧信息错了不要删改，追加一条更正让它「作废」，模型能处理好这种引用关系",
-          "动态内容永远放最后：用户消息、实时数据放在上下文尾部，避免污染可缓存前缀",
-          "工具返回按缓存页对齐：控制单次工具输出贴近缓存页尺寸（通常数千 token 量级），大结果分块返回",
-          "把 TODO 清单压成状态机：任务进度用高度压缩的结构化状态表示（编号+状态），而不是自然语言长篇纪要——压缩比直接影响每次续跑的缓存命中",
-          "意识到位比技巧重要：先在账本里把缓存命中率打出来（第 6 阶段成本课的 ledger 字段），再谈优化",
-        ], code: `// 缓存友好的消息结构（伪代码）
-messages = [
-  system,            // 稳定：角色+规则+工具用法（缓存前缀，命中后约 1 折计价）
-  tools,             // 稳定：工具定义
-  ...history,        // 只追加：含错误也保留，更正走新消息
-  todoState,         // 压缩：任务状态机（#1 done ✓ / #2 running / #3 pending）
-  userMessage,       // 动态：本轮输入，永远最后
-]`, lang: "text" },
         { type: "exercise", ex: {
           kind: "quiz",
           q: "长任务中 Agent 开始无视第一轮定下的约束。最可能的原因和首选修复是？",
@@ -225,18 +170,6 @@ messages = [
             "继续任务，模型按需用工具读取片段",
             "任务结束前把关键结论写进进度纪要",
           ],
-        } },
-        { type: "exercise", ex: {
-          kind: "quiz",
-          q: "按 Manus 的 KV 缓存经验，以下哪种做法会直接打爆缓存命中率？",
-          options: [
-            "把系统提示和工具定义固定放在上下文最前面",
-            "每轮对话前在系统提示里注入当前时间戳「now: 14:32:07」",
-            "把任务 TODO 压缩成结构化状态机放在固定位置",
-            "工具大结果落盘，上下文只留摘要",
-          ],
-          answer: 1,
-          explain: "时间戳每轮都变，插在前面等于让整段可缓存前缀作废——全部重新计价重算。动态内容必须放尾部，稳定内容放前缀。",
         } },
       ],
     },
